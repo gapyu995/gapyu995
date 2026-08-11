@@ -1,7 +1,7 @@
-// generateGif.js
+// generateGif.js (纯 JS 版，无需 canvas)
 const fs = require('fs');
-const { createCanvas } = require('canvas');
-const GIFEncoder = require('gifencoder');
+const Jimp = require('jimp');
+const GIFEncoder = require('gif-encoder-2');
 
 // ===== 1. 读取贡献数据 =====
 let rawData = fs.readFileSync('contributions.json', 'utf8');
@@ -24,7 +24,7 @@ weeks.forEach((week, weekIndex) => {
   });
 });
 
-// ===== 2. 游戏类（同前） =====
+// ===== 2. 游戏类 =====
 class PacMan {
   constructor() { this.row = 3; this.col = 26; }
   findNextMove(map) {
@@ -70,210 +70,134 @@ const ghosts = [
   new Ghost('Clyde', 6, 0, '#FF9F0A')
 ];
 
-// 保存每帧的数据（为了渲染方便，我们直接复制当前状态）
 const frames = [];
-const totalSteps = 40; // 帧数，可以调整
+const totalSteps = 40;
 
 for (let step = 0; step < totalSteps; step++) {
-  // 深拷贝当前地图状态
   const mapCopy = map.map(row => [...row]);
   const pacPos = { row: pacman.row, col: pacman.col };
   const ghostPos = ghosts.map(g => ({ row: g.row, col: g.col, color: g.color }));
   frames.push({ map: mapCopy, pac: pacPos, ghosts: ghostPos });
-  
-  // 移动一步
   pacman.move(map);
   ghosts.forEach(g => g.chase(pacman));
 }
 
 console.log(`✅ 已记录 ${frames.length} 帧`);
 
-// ===== 4. 用 Canvas 渲染 GIF =====
-const cellSize = 14;  // 比之前略小，适应GIF尺寸
-const gap = 3;
-const radius = 4;
-const width = cols * (cellSize + gap) + gap;
-const height = rows * (cellSize + gap) + gap + 40;
+// ===== 4. 配置 GIF 参数 =====
+const cellSize = 12;
+const gap = 2;
+const padding = { top: 20, bottom: 16, left: 4, right: 4 };
+const width = cols * (cellSize + gap) + gap + padding.left + padding.right;
+const height = rows * (cellSize + gap) + gap + padding.top + padding.bottom;
 
-const canvas = createCanvas(width, height);
-const ctx = canvas.getContext('2d');
-
-// 创建 GIF 编码器
-const encoder = new GIFEncoder(width, height);
-encoder.start();
-encoder.setRepeat(0);   // 0 = 无限循环
-encoder.setDelay(150);  // 每帧150ms（约6.67fps）
-encoder.setQuality(10);
-
-// 遍历每一帧
-frames.forEach((frame, idx) => {
-  ctx.clearRect(0, 0, width, height);
-  
-  // 背景
-  const grad = ctx.createLinearGradient(0, 0, 0, height);
-  grad.addColorStop(0, '#e8eaed');
-  grad.addColorStop(1, '#f5f5f7');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, width, height);
-
-  // 标题
-  ctx.fillStyle = '#1c1c1e';
-  ctx.font = 'bold 14px -apple-system, "SF Pro Display", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('💎 液态玻璃 · 贡献图', width/2, 22);
-  ctx.font = '10px -apple-system, "SF Pro Display", sans-serif';
-  ctx.fillStyle = '#8e8e93';
-  ctx.fillText('GitHub 贡献数据动态模拟', width/2, 36);
-
-  // 绘制格子
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = c * (cellSize + gap) + gap;
-      const y = r * (cellSize + gap) + gap + 44;
-      const color = colorMap[r][c];
-      const isEaten = frame.map[r][c] === 0;
-      let opacity = 0.85;
-      if (color === '#ebedf0') opacity = 0.30;
-      if (isEaten) opacity *= 0.4;
-
-      // 阴影
-      ctx.shadowColor = 'rgba(0,0,0,0.06)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetY = 2;
-      ctx.beginPath();
-      ctx.roundRect(x+1, y+2, cellSize, cellSize, radius);
-      ctx.fillStyle = 'rgba(0,0,0,0.06)';
-      ctx.fill();
-      ctx.shadowColor = 'transparent';
-
-      // 主体
-      const gradGlass = ctx.createRadialGradient(
-        x + cellSize*0.3, y + cellSize*0.3, 2,
-        x + cellSize*0.5, y + cellSize*0.5, cellSize*0.7
-      );
-      const baseColor = color || '#ebedf0';
-      gradGlass.addColorStop(0, `rgba(255,255,255,${0.8 * opacity})`);
-      gradGlass.addColorStop(0.5, `rgba(${hexToRgb(baseColor)}, ${0.7 * opacity})`);
-      gradGlass.addColorStop(1, `rgba(${hexToRgb(baseColor)}, ${0.9 * opacity})`);
-      ctx.beginPath();
-      ctx.roundRect(x, y, cellSize, cellSize, radius);
-      ctx.fillStyle = gradGlass;
-      ctx.fill();
-      ctx.strokeStyle = `rgba(255,255,255,0.4)`;
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-
-      // 高光
-      ctx.beginPath();
-      ctx.roundRect(x+2, y+1, cellSize-4, 3, 2);
-      ctx.fillStyle = `rgba(255,255,255,${0.5 * opacity})`;
-      ctx.fill();
-    }
-  }
-
-  // 绘制吃豆人
-  const pacX = frame.pac.col * (cellSize + gap) + gap + cellSize/2;
-  const pacY = frame.pac.row * (cellSize + gap) + gap + 44 + cellSize/2;
-  const size = cellSize * 0.4;
-  const gradPac = ctx.createRadialGradient(pacX-2, pacY-2, 2, pacX, pacY, size);
-  gradPac.addColorStop(0, '#FFF176');
-  gradPac.addColorStop(0.5, '#FFD700');
-  gradPac.addColorStop(1, '#FF9800');
-  ctx.beginPath();
-  ctx.arc(pacX, pacY, size, 0, Math.PI * 2);
-  ctx.fillStyle = gradPac;
-  ctx.fill();
-  ctx.strokeStyle = '#FF8F00';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // 嘴巴（这里简化，为了动感可以省略）
-  // 眼睛
-  ctx.beginPath();
-  ctx.arc(pacX + size*0.3, pacY - size*0.3, size*0.2, 0, Math.PI*2);
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(pacX + size*0.35, pacY - size*0.28, size*0.1, 0, Math.PI*2);
-  ctx.fillStyle = '#1c1c1e';
-  ctx.fill();
-
-  // 绘制幽灵
-  frame.ghosts.forEach(ghost => {
-    const gx = ghost.col * (cellSize + gap) + gap + cellSize/2;
-    const gy = ghost.row * (cellSize + gap) + gap + 44 + cellSize/2;
-    const gSize = cellSize * 0.5;
-    const gradGhost = ctx.createRadialGradient(gx-2, gy-2, 2, gx, gy, gSize);
-    gradGhost.addColorStop(0, ghost.color);
-    gradGhost.addColorStop(1, ghost.color);
-    ctx.globalAlpha = 0.7;
-    ctx.beginPath();
-    ctx.roundRect(gx - gSize, gy - gSize, gSize*2, gSize*2, 6);
-    ctx.fillStyle = gradGhost;
-    ctx.fill();
-    // 眼睛
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(gx - gSize*0.3, gy - gSize*0.2, gSize*0.2, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(gx + gSize*0.3, gy - gSize*0.2, gSize*0.2, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle = '#1c1c1e';
-    ctx.beginPath();
-    ctx.arc(gx - gSize*0.25, gy - gSize*0.15, gSize*0.08, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(gx + gSize*0.35, gy - gSize*0.15, gSize*0.08, 0, Math.PI*2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  });
-
-  // 添加帧编号（可选）
-  ctx.fillStyle = '#8e8e93';
-  ctx.font = '9px sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(`帧 ${idx+1}/${frames.length}`, width-8, height-6);
-
-  // 将canvas帧添加到GIF
-  encoder.addFrame(ctx);
-});
-
-// 结束编码
-encoder.finish();
-
-// 写入文件
-const buf = encoder.out.getData();
-fs.writeFileSync('output.gif', buf);
-console.log('✅ GIF 已生成: output.gif');
-
-// 辅助函数：十六进制颜色转R,G,B字符串
 function hexToRgb(hex) {
-  if (!hex || hex === '#ebedf0') return '235,237,240';
+  if (!hex || hex === '#ebedf0') return [235, 237, 240];
   let c = hex.substring(1);
   if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
-  const r = parseInt(c.substring(0,2), 16);
-  const g = parseInt(c.substring(2,4), 16);
-  const b = parseInt(c.substring(4,6), 16);
-  return `${r},${g},${b}`;
+  return [parseInt(c.substring(0,2), 16), parseInt(c.substring(2,4), 16), parseInt(c.substring(4,6), 16)];
 }
 
-// 修复 roundRect 的 polyfill（Canvas 原生不支持，需要定义）
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
-    if (r > w/2) r = w/2;
-    if (r > h/2) r = h/2;
-    this.moveTo(x + r, y);
-    this.lineTo(x + w - r, y);
-    this.quadraticCurveTo(x + w, y, x + w, y + r);
-    this.lineTo(x + w, y + h - r);
-    this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    this.lineTo(x + r, y + h);
-    this.quadraticCurveTo(x, y + h, x, y + h - r);
-    this.lineTo(x, y + r);
-    this.quadraticCurveTo(x, y, x + r, y);
-    this.closePath();
-    return this;
-  };
-}
+// ===== 5. 创建 GIF 编码器 =====
+const encoder = new GIFEncoder(width, height, 'neuquant', true);
+encoder.setDelay(150);
+encoder.setRepeat(0);
+encoder.start();
+
+// ===== 6. 逐帧绘制（使用 Jimp） =====
+(async () => {
+  for (let idx = 0; idx < frames.length; idx++) {
+    const frame = frames[idx];
+    const image = await Jimp.create(width, height, 0xFFFFFFFF);
+
+    // 背景渐变
+    for (let y = 0; y < height; y++) {
+      const ratio = y / height;
+      const r = Math.round(235 + (245 - 235) * ratio);
+      const g = Math.round(235 + (245 - 235) * ratio);
+      const b = Math.round(237 + (247 - 237) * ratio);
+      const color = Jimp.rgbaToInt(r, g, b, 255);
+      for (let x = 0; x < width; x++) {
+        image.setPixelColor(color, x, y);
+      }
+    }
+
+    // 绘制格子
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = c * (cellSize + gap) + gap + padding.left;
+        const y = r * (cellSize + gap) + gap + padding.top;
+        const color = colorMap[r][c];
+        const isEaten = frame.map[r][c] === 0;
+        let opacity = 0.85;
+        if (color === '#ebedf0') opacity = 0.30;
+        if (isEaten) opacity *= 0.4;
+
+        const [cr, cg, cb] = hexToRgb(color);
+        const alpha = Math.round(opacity * 255);
+        const baseColor = Jimp.rgbaToInt(cr, cg, cb, alpha);
+        for (let dy = 0; dy < cellSize; dy++) {
+          for (let dx = 0; dx < cellSize; dx++) {
+            image.setPixelColor(baseColor, x + dx, y + dy);
+          }
+        }
+        if (opacity > 0.2) {
+          const highlight = Jimp.rgbaToInt(255, 255, 255, Math.round(120 * opacity));
+          for (let dx = 2; dx < cellSize-2; dx++) {
+            image.setPixelColor(highlight, x + dx, y + 1);
+          }
+        }
+      }
+    }
+
+    // 吃豆人
+    const pacX = frame.pac.col * (cellSize + gap) + gap + padding.left + cellSize/2;
+    const pacY = frame.pac.row * (cellSize + gap) + gap + padding.top + cellSize/2;
+    const size = cellSize * 0.4;
+    const pacColor = Jimp.rgbaToInt(255, 215, 0, 255);
+    for (let angle = 0; angle < 2 * Math.PI; angle += 0.15) {
+      for (let r2 = 0; r2 < size; r2 += 1) {
+        const px = pacX + r2 * Math.cos(angle);
+        const py = pacY + r2 * Math.sin(angle);
+        if (px >= 0 && px < width && py >= 0 && py < height) {
+          image.setPixelColor(pacColor, Math.round(px), Math.round(py));
+        }
+      }
+    }
+    const white = Jimp.rgbaToInt(255, 255, 255, 255);
+    const black = Jimp.rgbaToInt(0, 0, 0, 255);
+    image.setPixelColor(white, Math.round(pacX + size*0.3), Math.round(pacY - size*0.3));
+    image.setPixelColor(white, Math.round(pacX + size*0.3+1), Math.round(pacY - size*0.3));
+    image.setPixelColor(black, Math.round(pacX + size*0.35), Math.round(pacY - size*0.28));
+
+    // 幽灵
+    frame.ghosts.forEach(ghost => {
+      const gx = ghost.col * (cellSize + gap) + gap + padding.left + cellSize/2;
+      const gy = ghost.row * (cellSize + gap) + gap + padding.top + cellSize/2;
+      const gSize = cellSize * 0.5;
+      const [gr, gg, gb] = hexToRgb(ghost.color);
+      const ghostColor = Jimp.rgbaToInt(gr, gg, gb, 200);
+      for (let dy = -gSize; dy < gSize; dy++) {
+        for (let dx = -gSize; dx < gSize; dx++) {
+          const px = gx + dx, py = gy + dy;
+          if (px >= 0 && px < width && py >= 0 && py < height) {
+            image.setPixelColor(ghostColor, Math.round(px), Math.round(py));
+          }
+        }
+      }
+      image.setPixelColor(white, Math.round(gx - gSize*0.3), Math.round(gy - gSize*0.2));
+      image.setPixelColor(white, Math.round(gx + gSize*0.3), Math.round(gy - gSize*0.2));
+      image.setPixelColor(black, Math.round(gx - gSize*0.25), Math.round(gy - gSize*0.15));
+      image.setPixelColor(black, Math.round(gx + gSize*0.35), Math.round(gy - gSize*0.15));
+    });
+
+    const bitmap = image.bitmap;
+    encoder.addFrame(bitmap.data);
+    console.log(`✅ 已渲染帧 ${idx+1}/${frames.length}`);
+  }
+
+  encoder.finish();
+  const buffer = encoder.out.getData();
+  fs.writeFileSync('output.gif', buffer);
+  console.log('✅ GIF 已生成: output.gif');
+})();
