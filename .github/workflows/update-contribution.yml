@@ -1,4 +1,4 @@
-name: 更新液态玻璃贡献图
+name: 🐍 更新霓虹贪吃蛇贡献图
 
 on:
   schedule:
@@ -36,5 +36,5 @@ jobs:
       - name: 提交并推送更新
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔄 自动更新贡献图"
-          file_pattern: output.svg
+          commit_message: "🐍 自动更新贪吃蛇贡献图"
+          file_pattern: snake-contribution.svg

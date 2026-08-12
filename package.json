@@ -1,7 +1,7 @@
 {
   "name": "github-pacman-custom",
   "version": "1.0.0",
-  "description": "苹果风格 · 液态玻璃吃豆人贡献图",
+  "description": "🐍 霓虹贪吃蛇 × GitHub 贡献图 — 吃食物变长，20 步后留下永久贡献",
   "main": "generateGame.js",
   "scripts": {
     "start": "node fetchData.js && node generateGame.js"
