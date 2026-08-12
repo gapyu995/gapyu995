@@ -1,9 +1,9 @@
-name: 🐍 更新霓虹贪吃蛇贡献图
+name: Update contribution snake SVG
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # 每天 UTC 0:00 运行（北京时间 8:00）
-  workflow_dispatch:      # 允许手动触发
+    - cron: "0 0 * * *"
+  workflow_dispatch:
 
 jobs:
   update:
@@ -12,29 +12,33 @@ jobs:
       contents: write
 
     steps:
-      - name: 检出仓库
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 设置 Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: npm
 
-      - name: 安装依赖
-        run: npm install @octokit/rest dotenv
+      - name: Install dependencies
+        run: npm ci
 
-      - name: 创建 .env 文件
-        run: |
-          echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" > .env
-
-      - name: 获取贡献数据
+      - name: Fetch all contribution days
         run: node fetchData.js
+        env:
+          GITHUB_USERNAME: ${{ github.repository_owner }}
+          CONTRIBUTIONS_TOKEN: ${{ secrets.CONTRIBUTIONS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 生成贡献图
-        run: node generateGame.js
+      - name: Test simulation rules
+        run: npm test
 
-      - name: 提交并推送更新
+      - name: Generate one-shot SMIL SVG
+        run: npm run generate
+
+      - name: Commit updated contribution animation
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🐍 自动更新贪吃蛇贡献图"
-          file_pattern: snake-contribution.svg
+          commit_message: "🐍 Update contribution snake SVG"
+          file_pattern: snake-contribution.svg README.md

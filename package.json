@@ -1,16 +1,16 @@
 {
   "name": "github-pacman-custom",
   "version": "1.0.0",
-  "description": "🐍 霓虹贪吃蛇 × GitHub 贡献图 — 吃食物变长，20 步后留下永久贡献",
+  "description": "One-shot SMIL SVG snake animation generated from GitHub contributions",
   "main": "generateGame.js",
   "scripts": {
-    "start": "node fetchData.js && node generateGame.js"
+    "start": "node fetchData.js && npm run generate",
+    "generate": "node generateGame.js",
+    "test": "node testGameEngine.js"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
-    "dotenv": "^17.4.2",
-    "gif-encoder-2": "^1.0.5",
-    "jimp": "^0.16.1"
+    "dotenv": "^17.4.2"
   },
   "author": "gapyu995",
   "license": "MIT"
