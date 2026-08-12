@@ -191,10 +191,10 @@ function runSimulation(basePermanentSet, options = {}) {
   const recentlyEatenSet = new Map();
   const FOOD_COOLDOWN = 3;
   let cumulativeSteps = 0;
+  let lastDropStep = 0; // track when last 20-step drop happened
   const frames = [];
 
   // === INITIAL: ALL original contribution cells become food ===
-  // (except cells occupied by the snake)
   const initOccupied = snake.getOccupiedSet();
   for (const key of basePermanentSet) {
     if (!initOccupied.has(key)) {
@@ -235,22 +235,25 @@ function runSimulation(basePermanentSet, options = {}) {
       break;
     }
 
-    // Eat food
+    // Eat food — always grow
     const headKey = `${snake.head.row},${snake.head.col}`;
     if (foodSet.has(headKey)) {
       foodSet.delete(headKey);
       foodSpawnSteps.delete(headKey);
       recentlyEatenSet.set(headKey, FOOD_COOLDOWN);
-      // Mark this cell as eaten (clear the dot)
       eatenContribSet.add(headKey);
+      snake.grow(1);
+    }
 
-      if (cumulativeSteps >= threshold && basePermanentSet.has(headKey)) {
-        // Phase 2: mark permanent + shrink
+    // === 20-step drop mechanic ===
+    // Every 20 cumulative steps, if head is on an EATEN original contribution cell
+    // (i.e. was a food that got eaten, not currently occupied by food),
+    // drop a permanent contribution and shrink by 1.
+    if (cumulativeSteps - lastDropStep >= threshold) {
+      if (eatenContribSet.has(headKey) && !foodSet.has(headKey) && !permanentSet.has(headKey)) {
         permanentSet.add(headKey);
-        snake.shrink(2);
-      } else {
-        // Phase 1 or non-contrib: just grow
-        snake.grow(1);
+        snake.shrink(1);
+        lastDropStep = cumulativeSteps;
       }
     }
 
