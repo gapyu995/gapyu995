@@ -42,11 +42,10 @@ const DR = [-1, 1, 0, 0];
 const DC = [0, 0, -1, 1];
 
 // ===== "Safe area" heuristic — A* with safety check =====
-function safeMove(snake, foodSet, permanentSet, eatenContribSet, gridRows, gridCols) {
+function snakeNextMove(snake, foodSet, permanentSet, eatCounts, gridRows, gridCols) {
   const head = snake.head;
   const headKey = `${head.row},${head.col}`;
 
-  // Obstacles: own body (except tail), permanent marks
   const occupied = new Set();
   for (let i = 0; i < snake.body.length - 1; i++) occupied.add(`${snake.body[i].row},${snake.body[i].col}`);
   for (const k of permanentSet) occupied.add(k);
@@ -55,22 +54,23 @@ function safeMove(snake, foodSet, permanentSet, eatenContribSet, gridRows, gridC
   for (let d = 0; d < 4; d++) {
     const nr = head.row + DR[d], nc = head.col + DC[d];
     const k = `${nr},${nc}`;
-    if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(k)) {
-      if (foodSet.has(k)) return { row: nr, col: nc };
+    if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(k) && foodSet.has(k)) {
+      return { row: nr, col: nc };
     }
   }
 
-  // BFS to nearest food
+  // BFS to find ALL reachable foods with distances
   const visited = new Set(); visited.add(headKey);
-  const queue = []; const F = [];
+  const queue = [];
+  const foodTargets = []; // { key, firstR, firstC, dist }
 
   for (let d = 0; d < 4; d++) {
     const nr = head.row + DR[d], nc = head.col + DC[d];
     const k = `${nr},${nc}`;
     if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(k)) {
-      if (foodSet.has(k)) return { row: nr, col: nc };
+      if (foodSet.has(k)) foodTargets.push({ key: k, firstR: nr, firstC: nc, dist: 1 });
       visited.add(k);
-      queue.push({ r: nr, c: nc, firstR: nr, firstC: nc });
+      queue.push({ r: nr, c: nc, firstR: nr, firstC: nc, dist: 1 });
     }
   }
 
@@ -81,38 +81,35 @@ function safeMove(snake, foodSet, permanentSet, eatenContribSet, gridRows, gridC
       const nr = cur.r + DR[d], nc = cur.c + DC[d];
       const k = `${nr},${nc}`;
       if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(k) && !visited.has(k)) {
-        if (foodSet.has(k)) {
-          F.push({ firstR: cur.firstR, firstC: cur.firstC, steps: qi + 1 });
-        }
+        if (foodSet.has(k)) foodTargets.push({ key: k, firstR: cur.firstR, firstC: cur.firstC, dist: cur.dist + 1 });
         visited.add(k);
-        queue.push({ r: nr, c: nc, firstR: cur.firstR, firstC: cur.firstC });
+        queue.push({ r: nr, c: nc, firstR: cur.firstR, firstC: cur.firstC, dist: cur.dist + 1 });
       }
     }
   }
 
-  // If food found, pick the safest (most open-space) path
-  if (F.length > 0) {
-    F.sort((a, b) => a.steps - b.steps);
-    // Among equal-distance paths, prefer the one toward more open space
-    let best = F[0];
-    let bestSpace = -1;
-    for (const f of F) {
-      if (f.steps > best.steps + 3) break; // only consider near-equal paths
+  if (foodTargets.length > 0) {
+    // Score each food: prefer low eatCount (under-explored), tiebreak by path safety
+    let best = foodTargets[0];
+    let bestScore = -Infinity;
+    for (const ft of foodTargets) {
+      const ec = eatCounts.get(ft.key) || 0;
       const simOcc = new Set(occupied);
-      simOcc.add(`${f.firstR},${f.firstC}`);
-      const space = countReachable(f.firstR, f.firstC, simOcc, gridRows, gridCols, 120);
-      if (space > bestSpace) { bestSpace = space; best = f; }
+      simOcc.add(`${ft.firstR},${ft.firstC}`);
+      const space = countReachable(ft.firstR, ft.firstC, simOcc, gridRows, gridCols, 150);
+      // High score = under-explored + safe path
+      const score = (100 - ec * 30) + space;
+      if (score > bestScore) { bestScore = score; best = ft; }
     }
     return { row: best.firstR, col: best.firstC };
   }
 
-  // No food reachable — avoid dead ends
+  // No food reachable: pick safest open direction
   const isGrowing = snake.body.length < snake.targetLength;
   const fullOcc = new Set(occupied);
   for (const s of snake.body) fullOcc.add(`${s.row},${s.col}`);
   if (!isGrowing && snake.body.length > 1) {
-    const tail = snake.body[snake.body.length - 1];
-    fullOcc.delete(`${tail.row},${tail.col}`);
+    fullOcc.delete(`${snake.body[snake.body.length - 1].row},${snake.body[snake.body.length - 1].col}`);
   }
 
   const cands = [];
@@ -120,10 +117,8 @@ function safeMove(snake, foodSet, permanentSet, eatenContribSet, gridRows, gridC
     const nr = head.row + DR[d], nc = head.col + DC[d];
     const k = `${nr},${nc}`;
     if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !fullOcc.has(k)) {
-      const simOcc = new Set(fullOcc);
-      simOcc.add(k);
-      const space = countReachable(nr, nc, simOcc, gridRows, gridCols, 200);
-      cands.push({ nr, nc, space });
+      const simOcc = new Set(fullOcc); simOcc.add(k);
+      cands.push({ nr, nc, space: countReachable(nr, nc, simOcc, gridRows, gridCols, 200) });
     }
   }
   if (cands.length === 0) return null;
@@ -147,26 +142,35 @@ function countReachable(sr, sc, obstacles, gr, gc, max = 200) {
   return cnt;
 }
 
-// ===== Food replenish — every FOOD_CHECK_INTERVAL steps, FIFO by eaten time =====
-const FOOD_CHECK_INTERVAL = 5; // ~ every 5 steps check if food < 4
-function replenishFood(foodSet, foodSpawnSteps, eatenOrder, currentStep, occupiedSet, permanentSet, basePermanentSet, recentlyEatenSet, maxFood) {
+// ===== Food replenish — every FOOD_CHECK_INTERVAL steps =====
+const FOOD_CHECK_INTERVAL = 5;
+function replenishFood(foodSet, foodSpawnSteps, eatCounts, currentStep, occupiedSet, permanentSet, basePermanentSet, recentlyEatenSet, maxFood) {
   if (foodSet.size >= maxFood) return;
 
   // blocked = snake body + permanent marks + existing food + cooldown cells
-  // Eaten (but not permanent) cells ARE allowed to regrow
   const blocked = new Set(occupiedSet);
   for (const k of permanentSet) blocked.add(k);
   for (const k of foodSet) blocked.add(k);
   for (const [k] of recentlyEatenSet) blocked.add(k);
 
-  // FIFO by eat time: oldest eaten cells regrow first
-  for (const key of eatenOrder) {
+  // Pick from basePermanentSet: prioritize cells eaten the LEAST times
+  // (eatCounts tracks how many times each cell has been eaten)
+  // Then break ties by age (cells not eaten recently → eatCounts was set earlier)
+  const candidates = [];
+  for (const key of basePermanentSet) {
+    if (blocked.has(key)) continue;
+    if (permanentSet.has(key)) continue;
+    const cnt = eatCounts.get(key) || 0;
+    candidates.push({ key, cnt });
+  }
+  // Sort: fewest eats first → they've been waiting longest
+  candidates.sort((a, b) => a.cnt - b.cnt);
+
+  for (const c of candidates) {
     if (foodSet.size >= maxFood) break;
-    if (blocked.has(key)) continue;          // occupied or permanent or on cooldown
-    if (!basePermanentSet.has(key)) continue; // must be an original contrib cell
-    const [r, c] = key.split(',').map(Number);
-    foodSet.add(key);
-    foodSpawnSteps.set(key, currentStep);
+    const [r, cc] = c.key.split(',').map(Number);
+    foodSet.add(c.key);
+    foodSpawnSteps.set(c.key, currentStep);
   }
 }
 
@@ -183,7 +187,7 @@ function runSimulation(basePermanentSet, options = {}) {
   const foodSpawnSteps = new Map();
   const permanentSet = new Set();
   const eatenContribSet = new Set();
-  const eatenOrder = []; // FIFO: oldest eaten first
+  const eatCounts = new Map(); // key → times eaten
   const recentlyEatenSet = new Map();
   const FOOD_COOLDOWN = 3;
   let cumulativeSteps = 0;
@@ -194,6 +198,7 @@ function runSimulation(basePermanentSet, options = {}) {
   const initOcc = snake.getOccupiedSet();
   for (const key of basePermanentSet) {
     if (!initOcc.has(key)) { foodSet.add(key); foodSpawnSteps.set(key, 0); }
+    eatCounts.set(key, 0);
   }
   console.log(`🍎 初始食物: ${foodSet.size} 个`);
 
@@ -209,7 +214,7 @@ function runSimulation(basePermanentSet, options = {}) {
     }
 
     // Move
-    let next = safeMove(snake, foodSet, permanentSet, eatenContribSet, rows, cols);
+    let next = snakeNextMove(snake, foodSet, permanentSet, eatCounts, rows, cols);
     if (!next) {
       snake.alive = false;
       frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
@@ -230,7 +235,7 @@ function runSimulation(basePermanentSet, options = {}) {
       foodSpawnSteps.delete(headKey);
       recentlyEatenSet.set(headKey, FOOD_COOLDOWN);
       eatenContribSet.add(headKey);
-      eatenOrder.push(headKey); // record eat time (end = most recent)
+      eatCounts.set(headKey, (eatCounts.get(headKey) || 0) + 1);
       snake.grow(1);
     }
 
@@ -243,12 +248,12 @@ function runSimulation(basePermanentSet, options = {}) {
       }
     }
 
-    // Replenish: check every FOOD_CHECK_INTERVAL steps, oldest eaten first
+    // Replenish: check every N steps, least-eaten cells regrow first (= one-by-one feel)
     if (step % FOOD_CHECK_INTERVAL === 0) {
       const occ = snake.getOccupiedSet();
       for (const k of permanentSet) occ.add(k);
       for (const k of eatenContribSet) occ.add(k);
-      replenishFood(foodSet, foodSpawnSteps, eatenOrder, step, occ, permanentSet, basePermanentSet, recentlyEatenSet, maxFood);
+      replenishFood(foodSet, foodSpawnSteps, eatCounts, step, occ, permanentSet, basePermanentSet, recentlyEatenSet, maxFood);
     }
 
     frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
@@ -296,4 +301,4 @@ function loadSimulation(filePath) {
   return { basePermanentSet: bps, frames, cumulativeSteps: data.cumulativeSteps };
 }
 
-module.exports = { Snake, safeMove, countReachable, replenishFood, runSimulation, loadSimulation, ROWS: rows, COLS: cols };
+module.exports = { Snake, snakeNextMove, countReachable, replenishFood, runSimulation, loadSimulation, ROWS: rows, COLS: cols };
