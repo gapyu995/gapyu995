@@ -1,5 +1,8 @@
 // gameEngine.js — Shared Snake game engine for GitHub contribution grid
 // Used by both generateGame.js (SVG) and generateGif.js (GIF)
+// Simulation is saved to simulation.json for consistency
+
+const fs = require('fs');
 
 const rows = 7;
 const cols = 52;
@@ -7,7 +10,6 @@ const cols = 52;
 // ===== Snake Class =====
 class Snake {
   constructor(startRow, startCol, initialLength) {
-    // body[0] is HEAD, body[length-1] is TAIL
     this.body = [];
     for (let i = 0; i < initialLength; i++) {
       this.body.push({ row: startRow, col: startCol - i });
@@ -24,10 +26,7 @@ class Snake {
     this.body.unshift({ row: nextRow, col: nextCol });
     const prevHead = this.body[1];
     this.direction = { dr: nextRow - prevHead.row, dc: nextCol - prevHead.col };
-    while (this.body.length > this.targetLength) {
-      this.body.pop();
-    }
-    // self-collision check
+    while (this.body.length > this.targetLength) this.body.pop();
     const head = this.head;
     for (let i = 1; i < this.body.length; i++) {
       if (this.body[i].row === head.row && this.body[i].col === head.col) {
@@ -48,33 +47,19 @@ class Snake {
   }
 }
 
-// ===== Strategic AI: Flood Fill Reachable Count =====
-/**
- * Starting from a given cell, count how many cells are reachable
- * without stepping on obstacles. This is the classic "don't trap yourself"
- * snake AI heuristic: always pick the move that leaves the most open space.
- */
+// ===== Flood Fill (for strategic movement) =====
 function floodFillCount(startRow, startCol, obstacles, gridRows, gridCols, maxCount = 200) {
   const visited = new Set();
   const queue = [{ row: startRow, col: startCol }];
   visited.add(`${startRow},${startCol}`);
-
-  const dirs = [
-    { dr: -1, dc: 0 }, { dr: 1, dc: 0 },
-    { dr: 0, dc: -1 }, { dr: 0, dc: 1 },
-  ];
-
-  let count = 0;
-  let qi = 0;
+  const dirs = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
+  let count = 0, qi = 0;
   while (qi < queue.length && count < maxCount) {
-    const cur = queue[qi++];
-    count++;
+    const cur = queue[qi++]; count++;
     for (const d of dirs) {
-      const nr = cur.row + d.dr;
-      const nc = cur.col + d.dc;
+      const nr = cur.row + d.dr, nc = cur.col + d.dc;
       const key = `${nr},${nc}`;
-      if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols &&
-          !obstacles.has(key) && !visited.has(key)) {
+      if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !obstacles.has(key) && !visited.has(key)) {
         visited.add(key);
         queue.push({ row: nr, col: nc });
       }
@@ -83,38 +68,23 @@ function floodFillCount(startRow, startCol, obstacles, gridRows, gridCols, maxCo
   return count;
 }
 
-// ===== BFS Pathfinding to nearest food =====
+// ===== BFS to nearest food =====
 function bfsNextMove(snake, foodSet, permanentSet, gridRows, gridCols) {
   const head = snake.head;
   const occupied = new Set();
-
-  // Block all body segments EXCEPT the tail (it will vacate)
-  for (let i = 0; i < snake.body.length - 1; i++) {
-    occupied.add(`${snake.body[i].row},${snake.body[i].col}`);
-  }
+  for (let i = 0; i < snake.body.length - 1; i++) occupied.add(`${snake.body[i].row},${snake.body[i].col}`);
   for (const key of permanentSet) occupied.add(key);
 
   const visited = new Set();
   visited.add(`${head.row},${head.col}`);
-
-  const directions = [
-    { dr: -1, dc: 0 }, { dr: 1, dc: 0 },
-    { dr: 0, dc: -1 }, { dr: 0, dc: 1 },
-  ];
-
+  const directions = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
   const queue = [];
 
-  // Enqueue initial neighbors
   for (const d of directions) {
-    const nr = head.row + d.dr;
-    const nc = head.col + d.dc;
+    const nr = head.row + d.dr, nc = head.col + d.dc;
     const key = `${nr},${nc}`;
-
-    if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols &&
-        !occupied.has(key) && !visited.has(key)) {
-      if (foodSet.has(key)) {
-        return { row: nr, col: nc };
-      }
+    if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(key) && !visited.has(key)) {
+      if (foodSet.has(key)) return { row: nr, col: nc };
       visited.add(key);
       queue.push({ row: nr, col: nc, firstStepRow: nr, firstStepCol: nc });
     }
@@ -124,36 +94,22 @@ function bfsNextMove(snake, foodSet, permanentSet, gridRows, gridCols) {
   while (qIdx < queue.length) {
     const cur = queue[qIdx++];
     for (const d of directions) {
-      const nr = cur.row + d.dr;
-      const nc = cur.col + d.dc;
+      const nr = cur.row + d.dr, nc = cur.col + d.dc;
       const key = `${nr},${nc}`;
-
-      if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols &&
-          !occupied.has(key) && !visited.has(key)) {
-        if (foodSet.has(key)) {
-          return { row: cur.firstStepRow, col: cur.firstStepCol };
-        }
+      if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(key) && !visited.has(key)) {
+        if (foodSet.has(key)) return { row: cur.firstStepRow, col: cur.firstStepCol };
         visited.add(key);
-        queue.push({
-          row: nr, col: nc,
-          firstStepRow: cur.firstStepRow, firstStepCol: cur.firstStepCol,
-        });
+        queue.push({ row: nr, col: nc, firstStepRow: cur.firstStepRow, firstStepCol: cur.firstStepCol });
       }
     }
   }
   return null;
 }
 
-// ===== Strategic Safe Move (used when BFS can't reach food) =====
-/**
- * Instead of random movement, use flood-fill to evaluate each possible move
- * and pick the one that leaves the most open space. This avoids dead ends
- * and "dumb spinning" behavior.
- */
+// ===== Strategic safe move (flood-fill based) =====
 function strategicSafeMove(snake, permanentSet, gridRows, gridCols) {
   const head = snake.head;
   const occupied = snake.getOccupiedSet();
-  // Remove tail from occupied (it will vacate unless we're growing)
   const isGrowing = snake.body.length < snake.targetLength;
   if (!isGrowing && snake.body.length > 1) {
     const tail = snake.body[snake.body.length - 1];
@@ -161,64 +117,45 @@ function strategicSafeMove(snake, permanentSet, gridRows, gridCols) {
   }
   for (const key of permanentSet) occupied.add(key);
 
-  const directions = [
-    { dr: -1, dc: 0 }, { dr: 1, dc: 0 },
-    { dr: 0, dc: -1 }, { dr: 0, dc: 1 },
-  ];
-
-  // Evaluate each possible direction
+  const directions = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
   const candidates = [];
   for (const d of directions) {
-    const nr = head.row + d.dr;
-    const nc = head.col + d.dc;
+    const nr = head.row + d.dr, nc = head.col + d.dc;
     const key = `${nr},${nc}`;
-
     if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !occupied.has(key)) {
-      // Simulate moving here, then count flood fill
       const simOccupied = new Set(occupied);
       for (const seg of snake.body) simOccupied.add(`${seg.row},${seg.col}`);
-      // Remove tail if not growing
       if (!isGrowing && snake.body.length > 1) {
         simOccupied.delete(`${snake.body[snake.body.length - 1].row},${snake.body[snake.body.length - 1].col}`);
       }
-      // Add new head position
       simOccupied.add(key);
-      // Remove the actual new head from obstacles for flood fill
-      const fillSet = new Set(simOccupied);
-      const reachable = floodFillCount(nr, nc, fillSet, gridRows, gridCols);
+      const reachable = floodFillCount(nr, nc, simOccupied, gridRows, gridCols);
       candidates.push({ ...d, reachable });
     }
   }
 
   if (candidates.length === 0) return null;
-
-  // Sort by reachable count descending (prefer more open space)
   candidates.sort((a, b) => b.reachable - a.reachable);
-
-  // Add some randomness: if top candidates have similar reachable counts, pick randomly among them
   const best = candidates[0];
-  const similarThreshold = Math.max(1, best.reachable * 0.85);
-  const topCandidates = candidates.filter(c => c.reachable >= similarThreshold);
-
-  if (topCandidates.length <= 1) {
-    return { row: head.row + best.dr, col: head.col + best.dc };
-  }
-
-  const chosen = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+  const threshold = Math.max(1, best.reachable * 0.85);
+  const top = candidates.filter(c => c.reachable >= threshold);
+  const chosen = top[Math.floor(Math.random() * top.length)];
   return { row: head.row + chosen.dr, col: head.col + chosen.dc };
 }
 
-// ===== Food Spawning (ONLY on original GitHub contribution cells) =====
-function spawnFood(foodSet, foodSpawnSteps, currentStep, occupiedSet, permanentSet, basePermanentSet, recentlyEatenSet, gridRows, gridCols, maxFood, spawnProbability) {
+// ===== Food Replenishment (only when < 4 foods on grid) =====
+function spawnFood(foodSet, foodSpawnSteps, currentStep, occupiedSet, permanentSet, eatenContribSet, basePermanentSet, recentlyEatenSet, gridRows, gridCols, maxFood) {
+  // Only spawn when below max
   if (foodSet.size >= maxFood) return;
-  if (Math.random() > spawnProbability) return;
 
+  // Build blocked set
   const blocked = new Set(occupiedSet);
   for (const key of permanentSet) blocked.add(key);
+  for (const key of eatenContribSet) blocked.add(key);
   for (const key of foodSet) blocked.add(key);
   for (const [key] of recentlyEatenSet) blocked.add(key);
 
-  // Only pick from real GitHub contribution cells
+  // Only pick from original contribution cells that haven't been eaten
   const available = [];
   for (const key of basePermanentSet) {
     if (!blocked.has(key)) {
@@ -236,16 +173,10 @@ function spawnFood(foodSet, foodSpawnSteps, currentStep, occupiedSet, permanentS
 }
 
 // ===== Simulation Loop =====
-/**
- * @param {Set} basePermanentSet — Cells with original GitHub contributions ("row,col")
- * @param {Object} options
- * @returns {{ frames: Array, finalPermanentSet: Set, snake: Snake, foodSet: Set, cumulativeSteps: number }}
- */
 function runSimulation(basePermanentSet, options = {}) {
   const {
     totalSteps = 400,
-    maxFood = 5,
-    spawnProb = 0.25,
+    maxFood = 4,
     snakeStartRow = 3,
     snakeStartCol = 26,
     initialLength = 3,
@@ -254,28 +185,28 @@ function runSimulation(basePermanentSet, options = {}) {
 
   const snake = new Snake(snakeStartRow, snakeStartCol, initialLength);
   const foodSet = new Set();
-  const foodSpawnSteps = new Map(); // key → step when spawned (for animation)
-  // permanentSet starts EMPTY — only accumulates marks the snake leaves in Phase 2
+  const foodSpawnSteps = new Map();
   const permanentSet = new Set();
-  // cooldown for recently-eaten cells: key → remaining steps (prevents instant respawn)
+  const eatenContribSet = new Set();
   const recentlyEatenSet = new Map();
   const FOOD_COOLDOWN = 3;
   let cumulativeSteps = 0;
   const frames = [];
 
-  // Spawn initial food (only on basePermanentSet cells)
+  // === INITIAL: ALL original contribution cells become food ===
+  // (except cells occupied by the snake)
   const initOccupied = snake.getOccupiedSet();
-  spawnFood(foodSet, foodSpawnSteps, 0, initOccupied, permanentSet, basePermanentSet, recentlyEatenSet, rows, cols, maxFood, 1.0);
-  if (foodSet.size === 0) {
-    const blocked = new Set(initOccupied);
-    for (const key of basePermanentSet) {
-      if (!blocked.has(key)) { foodSet.add(key); foodSpawnSteps.set(key, 0); if (foodSet.size >= 2) break; }
+  for (const key of basePermanentSet) {
+    if (!initOccupied.has(key)) {
+      foodSet.add(key);
+      foodSpawnSteps.set(key, 0);
     }
   }
+  console.log(`🍎 初始食物: ${foodSet.size} 个 (共 ${basePermanentSet.size} 个原始贡献格)`);
 
-  frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps));
+  frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
 
-  for (let step = 0; step < totalSteps; step++) {
+  for (let step = 1; step <= totalSteps; step++) {
     if (!snake.alive) break;
 
     // Tick cooldowns
@@ -286,17 +217,13 @@ function runSimulation(basePermanentSet, options = {}) {
     }
     for (const key of expiredKeys) recentlyEatenSet.delete(key);
 
-    // Try BFS to food first
+    // Move
     let nextMove = bfsNextMove(snake, foodSet, permanentSet, rows, cols);
-
-    // Fallback: strategic safe move (flood-fill based, not random)
-    if (!nextMove) {
-      nextMove = strategicSafeMove(snake, permanentSet, rows, cols);
-    }
+    if (!nextMove) nextMove = strategicSafeMove(snake, permanentSet, rows, cols);
 
     if (!nextMove) {
       snake.alive = false;
-      frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps));
+      frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
       break;
     }
 
@@ -304,47 +231,61 @@ function runSimulation(basePermanentSet, options = {}) {
     cumulativeSteps++;
 
     if (!moved) {
-      frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps));
+      frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
       break;
     }
 
-    // Check if head is on food
+    // Eat food
     const headKey = `${snake.head.row},${snake.head.col}`;
     if (foodSet.has(headKey)) {
       foodSet.delete(headKey);
       foodSpawnSteps.delete(headKey);
-      // Add cooldown to prevent instant respawn at same position
       recentlyEatenSet.set(headKey, FOOD_COOLDOWN);
+      // Mark this cell as eaten (clear the dot)
+      eatenContribSet.add(headKey);
 
-      if (cumulativeSteps < threshold) {
-        // Phase 1: grow
-        snake.grow(1);
-      } else if (basePermanentSet.has(headKey)) {
-        // Phase 2: cell MUST have an original GitHub contribution to become permanent
+      if (cumulativeSteps >= threshold && basePermanentSet.has(headKey)) {
+        // Phase 2: mark permanent + shrink
         permanentSet.add(headKey);
         snake.shrink(2);
       } else {
-        // Phase 2 but no original contribution here — just eat normally (grow)
+        // Phase 1 or non-contrib: just grow
         snake.grow(1);
       }
     }
 
-    // Spawn new food (only on basePermanentSet, max 4)
+    // Replenish food if below max (only from uneaten original contrib cells)
     const occupied = snake.getOccupiedSet();
     for (const key of permanentSet) occupied.add(key);
-    spawnFood(foodSet, foodSpawnSteps, step, occupied, permanentSet, basePermanentSet, recentlyEatenSet, rows, cols, maxFood, spawnProb);
+    for (const key of eatenContribSet) occupied.add(key);
+    spawnFood(foodSet, foodSpawnSteps, step, occupied, permanentSet, eatenContribSet, basePermanentSet, recentlyEatenSet, rows, cols, maxFood);
 
-    frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps));
+    frames.push(makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps));
 
-    while (snake.body.length > snake.targetLength) {
-      snake.body.pop();
-    }
+    while (snake.body.length > snake.targetLength) snake.body.pop();
   }
 
-  return { frames, finalPermanentSet: permanentSet, snake, foodSet, cumulativeSteps };
+  // Save frames to JSON for shared use between SVG and GIF
+  const simData = {
+    basePermanentSet: [...basePermanentSet],
+    frames: frames.map(f => ({
+      snakeBody: f.snakeBody,
+      snakeDirection: f.snakeDirection,
+      snakeAlive: f.snakeAlive,
+      foodSet: [...f.foodSet],
+      foodSpawnSteps: [...f.foodSpawnSteps],
+      permanentSet: [...f.permanentSet],
+      eatenContribSet: [...f.eatenContribSet],
+      cumulativeSteps: f.cumulativeSteps,
+    })),
+    cumulativeSteps,
+  };
+  fs.writeFileSync('simulation.json', JSON.stringify(simData));
+
+  return { frames, finalPermanentSet: permanentSet, finalEatenSet: eatenContribSet, snake, foodSet, cumulativeSteps };
 }
 
-function makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps) {
+function makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, eatenContribSet, cumulativeSteps) {
   return {
     snakeBody: snake.body.map(s => ({ row: s.row, col: s.col })),
     snakeDirection: { dr: snake.direction.dr, dc: snake.direction.dc },
@@ -352,17 +293,31 @@ function makeFrame(snake, foodSet, foodSpawnSteps, permanentSet, cumulativeSteps
     foodSet: new Set(foodSet),
     foodSpawnSteps: new Map(foodSpawnSteps),
     permanentSet: new Set(permanentSet),
+    eatenContribSet: new Set(eatenContribSet),
     cumulativeSteps,
   };
 }
 
+// ===== Load simulation from JSON =====
+function loadSimulation(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const data = JSON.parse(raw);
+  const basePermanentSet = new Set(data.basePermanentSet);
+  const frames = data.frames.map(f => ({
+    snakeBody: f.snakeBody,
+    snakeDirection: f.snakeDirection,
+    snakeAlive: f.snakeAlive,
+    foodSet: new Set(f.foodSet),
+    foodSpawnSteps: new Map(f.foodSpawnSteps),
+    permanentSet: new Set(f.permanentSet),
+    eatenContribSet: new Set(f.eatenContribSet),
+    cumulativeSteps: f.cumulativeSteps,
+  }));
+  return { basePermanentSet, frames, cumulativeSteps: data.cumulativeSteps };
+}
+
 module.exports = {
-  Snake,
-  bfsNextMove,
-  strategicSafeMove,
-  floodFillCount,
-  spawnFood,
-  runSimulation,
-  ROWS: rows,
-  COLS: cols,
+  Snake, bfsNextMove, strategicSafeMove, floodFillCount,
+  spawnFood, runSimulation, loadSimulation,
+  ROWS: rows, COLS: cols,
 };
