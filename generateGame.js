@@ -91,7 +91,7 @@ function animate(attributeName, frameValues) {
   const values = [...frameValues, frameValues.at(-1)].join(';');
   return `<animate attributeName="${attributeName}" values="${values}" ` +
     `keyTimes="${keyTimes}" dur="${durationMs}ms" begin="0s" ` +
-    'calcMode="discrete" repeatCount="1" fill="freeze"/>';
+    'calcMode="discrete" repeatCount="indefinite"/>';
 }
 
 function segmentGeometry(frame, index) {
@@ -151,8 +151,8 @@ const metadata = {
   frames: frames.length,
   frameDelayMs,
   durationMs,
-  repeatCount: 1,
-  fill: 'freeze',
+  repeatCount: 'indefinite',
+  fill: 'remove',
   contributionDays: contributionSet.size,
   totalContributions,
   maximumSnakeLength,
@@ -166,7 +166,7 @@ svg += '<?xml version="1.0" encoding="UTF-8"?>\n';
 svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
   `viewBox="0 0 ${width} ${height}" role="img" ` +
   `aria-label="Animated GitHub contribution snake" ` +
-  `data-animation-duration-ms="${durationMs}" data-repeat-count="1">\n`;
+  `data-animation-duration-ms="${durationMs}" data-repeat-count="indefinite">\n`;
 svg += `<metadata>${JSON.stringify(metadata)}</metadata>\n`;
 svg += `<rect width="${width}" height="${height}" fill="${colors.background}"/>\n`;
 svg += `<defs>
@@ -272,5 +272,5 @@ if (fs.existsSync('README.md')) {
 
 console.log(
   `snake-contribution.svg generated: ${frames.length} SMIL frames, ` +
-  `${(durationMs / 1000).toFixed(2)} seconds, repeatCount=1, fill=freeze`,
+  `${(durationMs / 1000).toFixed(2)} seconds, repeatCount=indefinite`,
 );
