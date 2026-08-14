@@ -7,17 +7,17 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 25;
+const SIMULATION_VERSION = 26;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
-  minSnakeLength: 7,
+  minSnakeLength: 13,
   shrinkInterval: 8,
   growthPointsPerSegment: 4,
   foodRegenerateSteps: 70,
   frameDelayMs: 120,
   gridRows: 7,
   gridCols: 54,
-  maxSimulationSteps: 1600,
+  maxSimulationSteps: 2500,
 });
 
 const DIRECTIONS = [
@@ -376,8 +376,9 @@ function simulateOnce(contributions, weights, options, seed) {
       foodSpawnOrders.delete(ateKey);
       // Staggered regeneration: heavier contribution days take longer to come
       // back, so eaten cells reappear at different times instead of in sync.
+      // Delays are multiples of the base so the food pattern stays periodic.
       const weight = weights.get(ateKey);
-      const delay = Math.round(foodRegenerateSteps * (1 + (weight - 1) / 3));
+      const delay = foodRegenerateSteps * weight;
       regeneration.set(ateKey, delay);
     }
 
@@ -413,7 +414,7 @@ function runSimulation(contributionSet, options = {}) {
   // periodic cycle instead of running into the budget.
   let best = null;
   for (let attempt = 0; attempt < 30; attempt++) {
-    const seed = (baseSeed + Math.imul(attempt + 1, 0x9e3779b9)) >>> 0;
+    const seed = (baseSeed + Math.imul(attempt, 0x9e3779b9)) >>> 0;
     const result = simulateOnce(contributions, weights, opts, seed);
     if (result.cycleStart >= 0) {
       best = result;
