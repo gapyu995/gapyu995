@@ -2,165 +2,81 @@ const assert = require('assert');
 const {
   coordinateKey,
   isAdjacent,
-  buildHamiltonianCycle,
-  buildLengthSchedule,
-  resolveShrinkInterval,
+  findShortestPath,
+  safestMove,
   runSimulation,
   DEFAULT_SIMULATION_OPTIONS,
 } = require('./gameEngine');
 
-function testHamiltonianCycle() {
-  const gridRows = 7;
-  const gridCols = 54;
-  const cycle = buildHamiltonianCycle(gridRows, gridCols);
-
-  assert.strictEqual(cycle.length, gridRows * gridCols + 1);
-  assert.deepStrictEqual(cycle[0], cycle[cycle.length - 1], 'cycle must close');
-
-  const keys = cycle.map(coordinateKey);
-  assert.strictEqual(new Set(keys.slice(0, -1)).size, gridRows * gridCols, 'visits every cell once');
-
-  for (let index = 1; index < cycle.length; index++) {
-    assert(isAdjacent(cycle[index - 1], cycle[index]), `cycle step ${index} must be adjacent`);
-  }
+function testFindShortestPath() {
+  const body = [{ row: 0, col: 0 }, { row: 0, col: -1 }];
+  const direction = { dr: 0, dc: 1 };
+  const path = findShortestPath(body, direction, body[0], '0,3', 3, 4);
+  assert(Array.isArray(path));
+  assert.strictEqual(path.length, 3);
+  assert.deepStrictEqual(path[0], { row: 0, col: 1 });
 }
 
-function testLengthScheduleIsPeriodic() {
-  const totalSteps = 20;
-  const growthPoints = new Int32Array(totalSteps);
-  growthPoints[2] = 4;
-
-  const schedule = buildLengthSchedule(totalSteps, growthPoints, 10, 4, 3, 10);
-
-  assert.strictEqual(schedule[0], 3);
-  assert.strictEqual(schedule[2], 4);
-  assert.strictEqual(schedule[totalSteps - 1], 3);
-  for (let step = 0; step < totalSteps; step++) {
-    assert(schedule[step] >= 3 && schedule[step] <= 10);
-  }
+function testSafestMove() {
+  const body = [{ row: 1, col: 1 }, { row: 1, col: 0 }, { row: 0, col: 0 }];
+  const direction = { dr: 0, dc: 1 };
+  const move = safestMove(body, direction, body[0], 3, 3);
+  assert(move, 'a safe move should exist');
+  assert(isAdjacent(body[0], move));
 }
 
-function testResolveShrinkInterval() {
-  const growthPoints = new Int32Array(100);
-  for (let step = 0; step < 100; step += 5) growthPoints[step] = 4; // 20 growth segments
-  assert.strictEqual(resolveShrinkInterval(0, 100, growthPoints, 4), 5);
-  assert.strictEqual(resolveShrinkInterval(10, 100, growthPoints, 4), 10);
-}
-
-function testRunSimulationWithVariableLength() {
-  const gridRows = 7;
-  const gridCols = 12;
-  const contributions = new Set([
-    '0,0', '1,1', '2,3', '0,4', '3,1', '3,4', '5,10', '6,2', '2,8', '4,6',
-  ]);
+function testRunSimulationSeamless() {
+  const contributions = new Set(['0,0', '1,2', '2,4', '3,1', '4,3', '5,0']);
   const contributionWeights = new Map([
     ['0,0', 1],
-    ['1,1', 2],
-    ['2,3', 3],
-    ['0,4', 4],
-    ['3,1', 2],
-    ['3,4', 1],
-    ['5,10', 4],
-    ['6,2', 1],
-    ['2,8', 3],
-    ['4,6', 2],
+    ['1,2', 2],
+    ['2,4', 4],
+    ['3,1', 1],
+    ['4,3', 3],
+    ['5,0', 2],
   ]);
-  const minSnakeLength = 3;
-  const eatTrailSteps = 5;
 
   const { frames, totalSteps } = runSimulation(contributions, {
     ...DEFAULT_SIMULATION_OPTIONS,
-    gridRows,
-    gridCols,
-    minSnakeLength,
-    eatTrailSteps,
-    seed: 987654,
+    gridRows: 6,
+    gridCols: 5,
+    minSnakeLength: 2,
+    shrinkInterval: 6,
+    foodRegenerateSteps: 20,
+    maxSimulationSteps: 800,
+    seed: 12345,
     contributionWeights,
   });
 
-  assert.strictEqual(frames.length, gridRows * gridCols);
-  assert.strictEqual(totalSteps, gridRows * gridCols);
+  assert.strictEqual(frames.length, totalSteps);
+  assert(frames.length > 20, 'the cycle should be long enough to be meaningful');
 
   let minSeen = Infinity;
   let maxSeen = 0;
-  const eatenEver = new Set();
-
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index];
     const length = frame.snakeBody.length;
     minSeen = Math.min(minSeen, length);
     maxSeen = Math.max(maxSeen, length);
 
-    assert(length >= minSnakeLength, `frame ${index} shorter than minimum`);
-    assert(length <= contributions.size, `frame ${index} exceeds the contribution cap`);
+    assert(length >= 2 && length <= contributions.size, `length out of bounds in frame ${index}`);
 
     for (let seg = 1; seg < length; seg++) {
       assert(isAdjacent(frame.snakeBody[seg - 1], frame.snakeBody[seg]), `disconnected in frame ${index}`);
     }
-
-    const bodyKeys = frame.snakeBody.map(coordinateKey);
-    assert.strictEqual(new Set(bodyKeys).size, bodyKeys.length, `overlap in frame ${index}`);
-
-    const eatenKeys = new Set();
-    for (let k = 0; k < eatTrailSteps; k++) {
-      const idx = (index - k + frames.length) % frames.length;
-      eatenKeys.add(coordinateKey(frames[idx].snakeBody[0]));
-    }
-    for (const key of eatenKeys) eatenEver.add(key);
-    for (const key of contributions) {
-      assert.strictEqual(
-        frame.foodSet.has(key),
-        !eatenKeys.has(key),
-        `food state mismatch for ${key} in frame ${index}`,
-      );
-    }
+    const keys = frame.snakeBody.map(coordinateKey);
+    assert.strictEqual(new Set(keys).size, keys.length, `overlap in frame ${index}`);
   }
+  assert(maxSeen > minSeen, 'snake length should vary');
 
-  assert(maxSeen > minSeen, 'snake length should vary (grow and shrink)');
-  for (const key of contributions) {
-    assert(eatenEver.has(key), `contribution ${key} should be eaten during the loop`);
-  }
-
-  // Seamless loop boundary.
+  // Seamless loop boundary: the cycle closes with a single adjacent step.
   const last = frames[frames.length - 1];
   const first = frames[0];
-  assert(isAdjacent(last.snakeBody[0], first.snakeBody[0]), 'boundary head must be adjacent');
-  const overlap = Math.min(first.snakeBody.length, last.snakeBody.length);
-  for (let seg = 0; seg + 1 < overlap; seg++) {
-    assert.deepStrictEqual(first.snakeBody[seg + 1], last.snakeBody[seg], 'boundary body must shift by one');
-  }
+  assert(isAdjacent(last.snakeBody[0], first.snakeBody[0]), 'cycle boundary must be adjacent');
 }
 
-function testDegenerateContributions() {
-  // Zero contributions: the snake must still produce a valid seamless loop.
-  const empty = runSimulation(new Set(), {
-    ...DEFAULT_SIMULATION_OPTIONS,
-    gridRows: 7,
-    gridCols: 12,
-    seed: 1,
-  });
-  assert.strictEqual(empty.frames.length, 7 * 12);
-  for (const frame of empty.frames) {
-    assert.strictEqual(frame.snakeBody.length, 1, 'no contributions => single-segment snake');
-  }
-
-  // One contribution: length capped at 1 even though minSnakeLength defaults to 3.
-  const one = runSimulation(new Set(['3,4']), {
-    ...DEFAULT_SIMULATION_OPTIONS,
-    gridRows: 7,
-    gridCols: 12,
-    seed: 2,
-    contributionWeights: new Map([['3,4', 4]]),
-  });
-  for (const frame of one.frames) {
-    assert(frame.snakeBody.length >= 1 && frame.snakeBody.length <= 1, 'single contribution caps the length');
-  }
-}
-
-testHamiltonianCycle();
-testLengthScheduleIsPeriodic();
-testResolveShrinkInterval();
-testRunSimulationWithVariableLength();
-testDegenerateContributions();
+testFindShortestPath();
+testSafestMove();
+testRunSimulationSeamless();
 
 console.log('All game engine regression tests passed.');

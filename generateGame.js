@@ -22,7 +22,7 @@ const simulationOptions = {
   gridCols: cols,
   contributionWeights,
 };
-const { frames, pathCount, maximumSnakeLength, shrinkInterval } = runSimulation(
+const { frames, maximumSnakeLength, shrinkInterval } = runSimulation(
   contributionSet,
   simulationOptions,
 );
@@ -160,8 +160,7 @@ const metadata = {
   minSnakeLength: simulationOptions.minSnakeLength,
   shrinkInterval,
   growthPointsPerSegment: simulationOptions.growthPointsPerSegment,
-  pathCount,
-  eatTrailSteps: simulationOptions.eatTrailSteps,
+  foodRegenerateSteps: simulationOptions.foodRegenerateSteps,
 };
 
 let svg = '';
@@ -192,7 +191,7 @@ svg += `<text x="${width / 2}" y="43" text-anchor="middle" ` +
   'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" ' +
   `font-size="10" fill="${colors.text}">` +
   `${totalContributions} contributions · ${contributionSet.size} active days · ` +
-  `${pathCount} paths · 4 pts = +1 · every ${shrinkInterval} steps = -1</text>\n`;
+  `4 pts = +1 · every ${shrinkInterval} steps = -1</text>\n`;
 
 svg += '<g id="contribution-grid">\n';
 for (let row = 0; row < rows; row++) {

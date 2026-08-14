@@ -1,28 +1,23 @@
 // Snake simulation for a GitHub contribution grid.
 //
-// The snake follows a closed Hamiltonian cycle that visits every grid cell
-// exactly once, so the animation loops seamlessly (the last frame advances
-// into the first with a single step). The cycle start point and direction are
-// seeded by the contribution data + date, so each day produces a different
-// route. Along the way the snake grows when it eats a contribution (levels
-// give 1-4 points, every `growthPointsPerSegment` points add one segment) and
-// shrinks one segment every `shrinkInterval` steps. The length schedule is
-// solved as a periodic orbit so the length also matches at the loop boundary.
+// The snake is driven by a deterministic state-transition rule instead of a
+// precomputed path: every step it picks the nearest food and walks the
+// shortest safe route toward it, falling back to the move that keeps the most
+// space reachable when no route exists. Because the state space is finite and
+// the transition is deterministic, the trajectory eventually repeats; we run
+// it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 22;
+const SIMULATION_VERSION = 23;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   minSnakeLength: 3,
-  // 0 or 'auto' balances the interval against the loop length and total
-  // growth, so the snake breathes naturally. A positive number uses a fixed
-  // interval (e.g. 10 for "one segment every 10 steps").
-  shrinkInterval: 0,
+  shrinkInterval: 8,
   growthPointsPerSegment: 4,
-  eatTrailSteps: 20,
+  foodRegenerateSteps: 100,
   frameDelayMs: 120,
   gridRows: 7,
   gridCols: 54,
-  pathCount: 5,
+  maxSimulationSteps: 1600,
 });
 
 const DIRECTIONS = [
@@ -36,11 +31,19 @@ function coordinateKey({ row, col }) {
   return `${row},${col}`;
 }
 
+function parseCoordinate(key) {
+  const [row, col] = key.split(',').map(Number);
+  return { row, col };
+}
+
 function isAdjacent(a, b) {
   return Math.abs(a.row - b.row) + Math.abs(a.col - b.col) === 1;
 }
 
-// FNV-1a hash of a string.
+function insideGrid(row, col, gridRows, gridCols) {
+  return row >= 0 && row < gridRows && col >= 0 && col < gridCols;
+}
+
 function hashString(value) {
   let hash = 2166136261 >>> 0;
   for (let index = 0; index < value.length; index++) {
@@ -50,7 +53,6 @@ function hashString(value) {
   return hash >>> 0;
 }
 
-// Deterministic PRNG (mulberry32).
 function mulberry32(seed) {
   let state = seed >>> 0;
   return function random() {
@@ -72,95 +74,6 @@ function defaultSeed(contributionSet) {
   return hashString(`${day}|${keys}`);
 }
 
-// Build a closed Hamiltonian cycle over gridRows × gridCols. Requires an even
-// number of columns. Returns gridRows * gridCols + 1 cells; the first and last
-// cell are equal, which closes the loop.
-function buildHamiltonianCycle(gridRows, gridCols) {
-  const cycle = [];
-
-  for (let row = 0; row < gridRows; row++) cycle.push({ row, col: 0 });
-
-  for (let col = 1; col < gridCols; col++) {
-    if (col % 2 === 1) {
-      for (let row = gridRows - 1; row >= 1; row--) cycle.push({ row, col });
-    } else {
-      for (let row = 1; row < gridRows; row++) cycle.push({ row, col });
-    }
-  }
-
-  cycle.push({ row: 0, col: gridCols - 1 });
-  for (let col = gridCols - 2; col >= 0; col--) cycle.push({ row: 0, col });
-
-  return cycle;
-}
-
-// Solve a periodic length schedule. `growthPoints[s]` is the number of growth
-// points earned at step s (0 otherwise). Returns schedule[s] = length at frame s.
-function buildLengthSchedule(
-  totalSteps,
-  growthPoints,
-  shrinkInterval,
-  growthPointsPerSegment,
-  minLength,
-  maxLength,
-) {
-  let length = minLength;
-  let progress = 0;
-
-  for (let iteration = 0; iteration < 1000; iteration++) {
-    const startLength = length;
-    const startProgress = progress;
-    for (let step = 0; step < totalSteps; step++) {
-      const points = growthPoints[step] || 0;
-      if (points > 0) {
-        const total = progress + points;
-        length = Math.min(length + Math.floor(total / growthPointsPerSegment), maxLength);
-        progress = total % growthPointsPerSegment;
-      }
-      if (step > 0 && step % shrinkInterval === 0) {
-        length = Math.max(length - 1, minLength);
-      }
-    }
-    if (length === startLength && progress === startProgress) break;
-  }
-
-  const schedule = new Int32Array(totalSteps);
-  let currentLength = length;
-  let currentProgress = progress;
-  for (let step = 0; step < totalSteps; step++) {
-    const points = growthPoints[step] || 0;
-    if (points > 0) {
-      const total = currentProgress + points;
-      currentLength = Math.min(
-        currentLength + Math.floor(total / growthPointsPerSegment),
-        maxLength,
-      );
-      currentProgress = total % growthPointsPerSegment;
-    }
-    if (step > 0 && step % shrinkInterval === 0) {
-      currentLength = Math.max(currentLength - 1, minLength);
-    }
-    schedule[step] = currentLength;
-  }
-
-  return schedule;
-}
-
-// Resolve the shrink interval: a positive value is used as-is; 0 or 'auto'
-// balances the interval against the total growth so the length oscillates
-// naturally instead of pinning against a bound.
-function resolveShrinkInterval(shrinkInterval, totalSteps, growthPoints, growthPointsPerSegment) {
-  if (Number.isFinite(shrinkInterval) && shrinkInterval > 0) return shrinkInterval;
-
-  let totalPoints = 0;
-  for (let step = 0; step < growthPoints.length; step++) totalPoints += growthPoints[step];
-  const totalGrowth = Math.floor(totalPoints / growthPointsPerSegment);
-  if (totalGrowth <= 0) return Math.max(1, totalSteps);
-
-  const interval = Math.round(totalSteps / totalGrowth);
-  return Math.max(1, Math.min(totalSteps, interval));
-}
-
 function normalizeWeights(contributionSet, contributionWeights) {
   const source = contributionWeights instanceof Map
     ? contributionWeights
@@ -173,16 +86,124 @@ function normalizeWeights(contributionSet, contributionWeights) {
   return normalized;
 }
 
+function orderedDirections(direction) {
+  return [
+    direction,
+    { dr: -direction.dc, dc: direction.dr },
+    { dr: direction.dc, dc: -direction.dr },
+    { dr: -direction.dr, dc: -direction.dc },
+  ];
+}
+
+// Cells the snake will occupy after the next move (tail vacates if not growing).
+function occupiedForNextMove(body, targetLength) {
+  const tailWillMove = body.length >= targetLength;
+  const occupied = new Set();
+  const count = tailWillMove ? body.length - 1 : body.length;
+  for (let index = 0; index < count; index++) {
+    occupied.add(coordinateKey(body[index]));
+  }
+  return occupied;
+}
+
+function findShortestPath(body, direction, head, targetKey, gridRows, gridCols) {
+  if (!targetKey) return null;
+  if (coordinateKey(head) === targetKey) return [];
+
+  const occupied = occupiedForNextMove(body, body.length);
+  const startKey = coordinateKey(head);
+  const visited = new Set([startKey]);
+  const queue = [{ row: head.row, col: head.col }];
+  const parent = new Map();
+  let queueIndex = 0;
+
+  while (queueIndex < queue.length) {
+    const current = queue[queueIndex++];
+    for (const { dr, dc } of orderedDirections(direction)) {
+      const row = current.row + dr;
+      const col = current.col + dc;
+      const key = `${row},${col}`;
+      if (!insideGrid(row, col, gridRows, gridCols) || occupied.has(key) || visited.has(key)) continue;
+
+      visited.add(key);
+      parent.set(key, coordinateKey(current));
+      if (key === targetKey) {
+        const path = [{ row, col }];
+        let cursor = key;
+        while (parent.get(cursor) !== startKey) {
+          cursor = parent.get(cursor);
+          path.push(parseCoordinate(cursor));
+        }
+        return path.reverse();
+      }
+      queue.push({ row, col });
+    }
+  }
+  return null;
+}
+
+function countReachable(start, obstacles, gridRows, gridCols) {
+  const visited = new Set([coordinateKey(start)]);
+  const queue = [start];
+  let queueIndex = 0;
+  while (queueIndex < queue.length) {
+    const current = queue[queueIndex++];
+    for (const { dr, dc } of DIRECTIONS) {
+      const row = current.row + dr;
+      const col = current.col + dc;
+      const key = `${row},${col}`;
+      if (!insideGrid(row, col, gridRows, gridCols) || obstacles.has(key) || visited.has(key)) continue;
+      visited.add(key);
+      queue.push({ row, col });
+    }
+  }
+  return visited.size;
+}
+
+function nearestFoodKey(head, foodSet) {
+  let bestKey = null;
+  let bestDistance = Infinity;
+  for (const key of foodSet) {
+    const food = parseCoordinate(key);
+    const distance = Math.abs(head.row - food.row) + Math.abs(head.col - food.col);
+    if (distance < bestDistance || (distance === bestDistance && key < bestKey)) {
+      bestKey = key;
+      bestDistance = distance;
+    }
+  }
+  return bestKey;
+}
+
+function safestMove(body, direction, head, gridRows, gridCols) {
+  const occupied = occupiedForNextMove(body, body.length);
+  const candidates = [];
+  for (const { dr, dc } of orderedDirections(direction)) {
+    const row = head.row + dr;
+    const col = head.col + dc;
+    const key = `${row},${col}`;
+    if (!insideGrid(row, col, gridRows, gridCols) || occupied.has(key)) continue;
+    const simulated = new Set(occupied);
+    simulated.add(key);
+    candidates.push({
+      row,
+      col,
+      space: countReachable({ row, col }, simulated, gridRows, gridCols),
+    });
+  }
+  candidates.sort((a, b) => b.space - a.space);
+  return candidates[0] ? { row: candidates[0].row, col: candidates[0].col } : null;
+}
+
 function runSimulation(contributionSet, options = {}) {
   const {
     minSnakeLength,
     shrinkInterval,
     growthPointsPerSegment,
-    eatTrailSteps,
+    foodRegenerateSteps,
     frameDelayMs,
     gridRows,
     gridCols,
-    pathCount,
+    maxSimulationSteps,
     seed = defaultSeed(new Set(contributionSet)),
     contributionWeights = new Map(),
   } = { ...DEFAULT_SIMULATION_OPTIONS, ...options };
@@ -192,108 +213,175 @@ function runSimulation(contributionSet, options = {}) {
   const maxLength = Math.max(1, contributions.size);
   const minLength = Math.min(minSnakeLength, maxLength);
 
-  const cycle = buildHamiltonianCycle(gridRows, gridCols);
-  const cycleLength = cycle.length - 1;
-
-  // Seeded start phase and direction, so each day the route differs.
   const random = mulberry32(seed);
-  const offset = Math.floor(random() * cycleLength);
-  const reverse = random() < 0.5;
-  const headSequence = [];
-  for (let index = 0; index < cycleLength; index++) {
-    const cycleIndex = reverse
-      ? (offset - index + cycleLength) % cycleLength
-      : (offset + index) % cycleLength;
-    headSequence.push({ ...cycle[cycleIndex] });
+  const startRow = Math.floor(random() * gridRows);
+  const startCol = minLength - 1;
+  const body = [];
+  for (let index = 0; index < minLength; index++) {
+    body.push({ row: startRow, col: startCol - index });
   }
-  const totalSteps = cycleLength;
+  let direction = { dr: 0, dc: 1 };
+  let targetLength = minLength;
+  let growthProgress = 0;
+  let alive = true;
 
-  const growthPoints = new Int32Array(totalSteps);
-  for (let step = 0; step < totalSteps; step++) {
-    const key = coordinateKey(headSequence[step]);
-    if (contributions.has(key)) growthPoints[step] = weights.get(key);
-  }
+  const foodSet = new Set(contributions);
+  const foodSpawnOrders = new Map();
+  let nextSpawnOrder = 0;
+  for (const key of contributions) foodSpawnOrders.set(key, nextSpawnOrder++);
+  // regen: key -> steps until it becomes food again
+  const regeneration = new Map();
 
-  const effectiveShrinkInterval = resolveShrinkInterval(
-    shrinkInterval, totalSteps, growthPoints, growthPointsPerSegment,
-  );
-
-  const schedule = buildLengthSchedule(
-    totalSteps,
-    growthPoints,
-    effectiveShrinkInterval,
-    growthPointsPerSegment,
-    minLength,
-    maxLength,
-  );
-
-  const trailLength = Math.min(eatTrailSteps, totalSteps);
   const frames = [];
-  for (let step = 0; step < totalSteps; step++) {
-    const length = Math.min(schedule[step], totalSteps);
-    const snakeBody = [];
-    for (let offsetIndex = 0; offsetIndex < length; offsetIndex++) {
-      const index = (step - offsetIndex + totalSteps) % totalSteps;
-      snakeBody.push({ ...headSequence[index] });
-    }
+  const seen = new Map();
+  let cycleStart = -1;
+  let cycleEnd = -1;
 
-    const head = snakeBody[0];
-    const previous = snakeBody[1] || head;
-    const eaten = new Set();
-    for (let offsetIndex = 0; offsetIndex < trailLength; offsetIndex++) {
-      const index = (step - offsetIndex + totalSteps) % totalSteps;
-      eaten.add(coordinateKey(headSequence[index]));
-    }
-
-    const foodSet = new Set();
-    for (const key of contributions) {
-      if (!eaten.has(key)) foodSet.add(key);
-    }
-
+  function pushFrame() {
     frames.push({
-      snakeBody,
-      snakeDirection: {
-        dr: head.row - previous.row,
-        dc: head.col - previous.col,
-      },
-      snakeAlive: true,
-      foodSet,
-      cumulativeSteps: step,
+      snakeBody: body.map(segment => ({ ...segment })),
+      snakeDirection: { ...direction },
+      snakeAlive: alive,
+      foodSet: new Set(foodSet),
+      cumulativeSteps: frames.length,
     });
   }
 
-  const lengths = [...schedule];
+  pushFrame();
+
+  for (let step = 1; step <= maxSimulationSteps; step++) {
+    if (!alive) break;
+
+    // State hash for cycle detection.
+    const bodyKeys = body.map(coordinateKey).join(',');
+    const sortedFood = [...foodSet].sort().join(',');
+    const sortedRegen = [...regeneration.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]))
+      .map(([key, left]) => `${key}:${left}`)
+      .join(',');
+    const state = [
+      coordinateKey(body[0]),
+      bodyKeys,
+      targetLength,
+      growthProgress,
+      step % Math.max(1, shrinkInterval),
+      sortedFood,
+      sortedRegen,
+    ].join('|');
+
+    if (seen.has(state)) {
+      cycleStart = seen.get(state);
+      cycleEnd = frames.length;
+      break;
+    }
+    seen.set(state, frames.length);
+
+    const head = body[0];
+    const targetKey = nearestFoodKey(head, foodSet);
+    const path = findShortestPath(body, direction, head, targetKey, gridRows, gridCols);
+    const next = (path && path.length > 0) ? path[0] : safestMove(body, direction, head, gridRows, gridCols);
+
+    if (!next) {
+      alive = false;
+      pushFrame();
+      break;
+    }
+
+    const nextKey = coordinateKey(next);
+    const ateKey = foodSet.has(nextKey) ? nextKey : null;
+    let grewBy = 0;
+    if (ateKey) {
+      const points = weights.get(ateKey);
+      const total = growthProgress + points;
+      grewBy = Math.floor(total / growthPointsPerSegment);
+      growthProgress = total % growthPointsPerSegment;
+      targetLength = Math.min(targetLength + grewBy, maxLength);
+    }
+
+    body.unshift({ ...next });
+    direction = { dr: next.row - head.row, dc: next.col - head.col };
+    while (body.length > targetLength) body.pop();
+
+    // Self-collision check.
+    const headKey = coordinateKey(body[0]);
+    for (let index = 1; index < body.length; index++) {
+      if (coordinateKey(body[index]) === headKey) {
+        alive = false;
+        break;
+      }
+    }
+    if (!alive) {
+      pushFrame();
+      break;
+    }
+
+    if (ateKey) {
+      foodSet.delete(ateKey);
+      foodSpawnOrders.delete(ateKey);
+      regeneration.set(ateKey, foodRegenerateSteps);
+    }
+
+    if (step % Math.max(1, shrinkInterval) === 0) {
+      targetLength = Math.max(targetLength - 1, minLength);
+      while (body.length > targetLength) body.pop();
+    }
+
+    // Advance food regeneration.
+    for (const [key, left] of [...regeneration.entries()]) {
+      const nextLeft = left - 1;
+      if (nextLeft <= 0) {
+        regeneration.delete(key);
+        foodSet.add(key);
+        foodSpawnOrders.set(key, nextSpawnOrder++);
+      } else {
+        regeneration.set(key, nextLeft);
+      }
+    }
+
+    pushFrame();
+  }
+
+  let framesOut = frames;
+  if (cycleStart >= 0 && cycleEnd > cycleStart) {
+    framesOut = frames.slice(cycleStart, cycleEnd);
+  } else {
+    // No cycle detected within the budget: fall back to the whole run minus the
+    // last frame (so it still loops at least once). This is a safety net.
+    framesOut = frames.slice(0, frames.length - 1);
+  }
+
+  const lengths = framesOut.map(frame => frame.snakeBody.length);
   const minSeen = Math.min(...lengths);
   const maxSeen = Math.max(...lengths);
   console.log(
-    `🐍 ${frames.length} frames · ${pathCount} path segments · ` +
+    `🐍 ${framesOut.length} frames (cycle ${cycleStart >= 0 ? 'detected' : 'fallback'}) · ` +
     `length ${minSeen}..${maxSeen} (max ${maxLength}) · ` +
-    `shrink every ${effectiveShrinkInterval} steps · seamless loop`,
+    `shrink every ${shrinkInterval} steps`,
   );
 
   return {
-    frames,
-    pathCount,
-    totalSteps,
+    frames: framesOut,
+    totalSteps: framesOut.length,
     maximumSnakeLength: maxLength,
-    minSnakeLength,
-    shrinkInterval: effectiveShrinkInterval,
+    minSnakeLength: minLength,
+    shrinkInterval,
     growthPointsPerSegment,
-    eatTrailSteps: trailLength,
+    foodRegenerateSteps,
     frameDelayMs,
     contributionSet: contributions,
-    cumulativeSteps: totalSteps,
+    cumulativeSteps: framesOut.length,
   };
 }
 
 module.exports = {
   coordinateKey,
   isAdjacent,
+  parseCoordinate,
   hashString,
   mulberry32,
-  buildHamiltonianCycle,
-  buildLengthSchedule,
-  resolveShrinkInterval,
+  nearestFoodKey,
+  findShortestPath,
+  safestMove,
   runSimulation,
   SIMULATION_VERSION,
   DEFAULT_SIMULATION_OPTIONS,
