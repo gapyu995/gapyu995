@@ -12,7 +12,6 @@ const {
   cols,
   colorMap,
   contributionSet,
-  contributionWeights,
   totalContributions,
 } = loadContributionData();
 
@@ -20,10 +19,8 @@ const simulationOptions = {
   ...DEFAULT_SIMULATION_OPTIONS,
   gridRows: rows,
   gridCols: cols,
-  contributionWeights,
-  simulationFile: null,
 };
-const { frames } = runSimulation(contributionSet, simulationOptions);
+const { frames, snakeLength, pathCount } = runSimulation(contributionSet, simulationOptions);
 
 const cellSize = 18;
 const gap = 4;
@@ -34,7 +31,7 @@ const width = cols * span + gap;
 const height = rows * span + gridOffsetY + 18;
 const frameDelayMs = simulationOptions.frameDelayMs;
 const durationMs = frames.length * frameDelayMs;
-const maximumSnakeLength = contributionSet.size;
+const maximumSnakeLength = snakeLength;
 const animationVersion = `${SIMULATION_VERSION}-` + crypto
   .createHash('sha256')
   .update(fs.readFileSync('contributions.json'))
@@ -156,9 +153,9 @@ const metadata = {
   contributionDays: contributionSet.size,
   totalContributions,
   maximumSnakeLength,
-  recoveryDelaySteps: simulationOptions.dropInterval,
-  autoShrinkIntervalSteps: simulationOptions.autoShrinkInterval,
-  growthPointsPerSegment: simulationOptions.growthPointsPerSegment,
+  snakeLength,
+  pathCount,
+  eatTrailSteps: simulationOptions.eatTrailSteps,
 };
 
 let svg = '';
@@ -189,7 +186,7 @@ svg += `<text x="${width / 2}" y="43" text-anchor="middle" ` +
   'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" ' +
   `font-size="10" fill="${colors.text}">` +
   `${totalContributions} contributions · ${contributionSet.size} active days · ` +
-  '4 points = +1 · every 10 steps = -1</text>\n';
+  `${pathCount} paths · seamless loop</text>\n`;
 
 svg += '<g id="contribution-grid">\n';
 for (let row = 0; row < rows; row++) {
