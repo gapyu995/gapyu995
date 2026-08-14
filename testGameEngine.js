@@ -131,9 +131,36 @@ function testRunSimulationWithVariableLength() {
   }
 }
 
+function testDegenerateContributions() {
+  // Zero contributions: the snake must still produce a valid seamless loop.
+  const empty = runSimulation(new Set(), {
+    ...DEFAULT_SIMULATION_OPTIONS,
+    gridRows: 7,
+    gridCols: 12,
+    seed: 1,
+  });
+  assert.strictEqual(empty.frames.length, 7 * 12);
+  for (const frame of empty.frames) {
+    assert.strictEqual(frame.snakeBody.length, 1, 'no contributions => single-segment snake');
+  }
+
+  // One contribution: length capped at 1 even though minSnakeLength defaults to 3.
+  const one = runSimulation(new Set(['3,4']), {
+    ...DEFAULT_SIMULATION_OPTIONS,
+    gridRows: 7,
+    gridCols: 12,
+    seed: 2,
+    contributionWeights: new Map([['3,4', 4]]),
+  });
+  for (const frame of one.frames) {
+    assert(frame.snakeBody.length >= 1 && frame.snakeBody.length <= 1, 'single contribution caps the length');
+  }
+}
+
 testHamiltonianCycle();
 testLengthScheduleIsPeriodic();
 testResolveShrinkInterval();
 testRunSimulationWithVariableLength();
+testDegenerateContributions();
 
 console.log('All game engine regression tests passed.');

@@ -190,6 +190,7 @@ function runSimulation(contributionSet, options = {}) {
   const contributions = new Set(contributionSet);
   const weights = normalizeWeights(contributions, contributionWeights);
   const maxLength = Math.max(1, contributions.size);
+  const minLength = Math.min(minSnakeLength, maxLength);
 
   const cycle = buildHamiltonianCycle(gridRows, gridCols);
   const cycleLength = cycle.length - 1;
@@ -222,7 +223,7 @@ function runSimulation(contributionSet, options = {}) {
     growthPoints,
     effectiveShrinkInterval,
     growthPointsPerSegment,
-    minSnakeLength,
+    minLength,
     maxLength,
   );
 
