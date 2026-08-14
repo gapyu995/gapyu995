@@ -7,7 +7,7 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 23;
+const SIMULATION_VERSION = 24;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   minSnakeLength: 3,
@@ -252,13 +252,12 @@ function runSimulation(contributionSet, options = {}) {
   for (let step = 1; step <= maxSimulationSteps; step++) {
     if (!alive) break;
 
-    // State hash for cycle detection.
+    // State hash for cycle detection. The regeneration countdowns are
+    // deliberately excluded: the rendered frames only depend on the snake body
+    // and the food set, so a repeated (body + food) state already gives a
+    // visually seamless loop even though internal countdowns keep drifting.
     const bodyKeys = body.map(coordinateKey).join(',');
     const sortedFood = [...foodSet].sort().join(',');
-    const sortedRegen = [...regeneration.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]))
-      .map(([key, left]) => `${key}:${left}`)
-      .join(',');
     const state = [
       coordinateKey(body[0]),
       bodyKeys,
@@ -266,7 +265,6 @@ function runSimulation(contributionSet, options = {}) {
       growthProgress,
       step % Math.max(1, shrinkInterval),
       sortedFood,
-      sortedRegen,
     ].join('|');
 
     if (seen.has(state)) {
@@ -318,7 +316,11 @@ function runSimulation(contributionSet, options = {}) {
     if (ateKey) {
       foodSet.delete(ateKey);
       foodSpawnOrders.delete(ateKey);
-      regeneration.set(ateKey, foodRegenerateSteps);
+      // Staggered regeneration: heavier contribution days take longer to come
+      // back, so eaten cells reappear at different times instead of in sync.
+      const weight = weights.get(ateKey);
+      const delay = Math.round(foodRegenerateSteps * (1 + (weight - 1) / 3));
+      regeneration.set(ateKey, delay);
     }
 
     if (step % Math.max(1, shrinkInterval) === 0) {
