@@ -7,10 +7,11 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 26;
+const SIMULATION_VERSION = 27;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
-  minSnakeLength: 13,
+  initialLength: 13,
+  minSnakeLength: 10,
   shrinkInterval: 8,
   growthPointsPerSegment: 4,
   foodRegenerateSteps: 70,
@@ -265,6 +266,7 @@ function safestMove(body, direction, head, gridRows, gridCols) {
 
 function simulateOnce(contributions, weights, options, seed) {
   const {
+    initialLength,
     minSnakeLength,
     shrinkInterval,
     growthPointsPerSegment,
@@ -276,16 +278,17 @@ function simulateOnce(contributions, weights, options, seed) {
 
   const maxLength = Math.max(1, contributions.size);
   const minLength = Math.min(minSnakeLength, maxLength);
+  const startLength = Math.min(initialLength, maxLength, gridCols);
 
   const random = mulberry32(seed);
   const startRow = Math.floor(random() * gridRows);
-  const startCol = minLength - 1;
+  const startCol = startLength - 1;
   const body = [];
-  for (let index = 0; index < minLength; index++) {
+  for (let index = 0; index < startLength; index++) {
     body.push({ row: startRow, col: startCol - index });
   }
   let direction = { dr: 0, dc: 1 };
-  let targetLength = minLength;
+  let targetLength = startLength;
   let growthProgress = 0;
   let alive = true;
 
