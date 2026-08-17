@@ -7,14 +7,14 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 29;
+const SIMULATION_VERSION = 30;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
   minSnakeLength: 1,
-  shrinkInterval: 8,
+  shrinkInterval: 12,
   growthPointsPerSegment: 4,
-  foodRegenerateSteps: 70,
+  foodRegenerateSteps: 80,
   frameDelayMs: 120,
   gridRows: 7,
   gridCols: 54,
@@ -211,14 +211,20 @@ function canReachTail(headCell, body, targetLength, gridRows, gridCols) {
 
 // Pick the next head cell: prefer a tail-safe move (keeps the tail reachable)
 // that best approaches the target; fall back to any valid move if needed.
-function chooseNextMove(body, targetLength, direction, head, targetKey, gridRows, gridCols) {
-  const occupied = occupiedForNextMove(body, targetLength);
+function chooseNextMove(body, targetLength, direction, head, targetKey, foodSet, gridRows, gridCols) {
   const candidates = [];
   for (const { dr, dc } of orderedDirections(direction)) {
     const row = head.row + dr;
     const col = head.col + dc;
     const key = `${row},${col}`;
-    if (!insideGrid(row, col, gridRows, gridCols) || occupied.has(key)) continue;
+    if (!insideGrid(row, col, gridRows, gridCols)) continue;
+
+    // The tail vacates only when the snake is NOT growing at this step (not
+    // eating) and its body is at or above the target length.
+    const eating = foodSet.has(key);
+    const tailMoves = !eating && body.length >= targetLength;
+    const occupied = tailMoves ? body.slice(0, -1) : body;
+    if (occupied.some(segment => coordinateKey(segment) === key)) continue;
     candidates.push({ row, col });
   }
 
@@ -290,6 +296,7 @@ function simulateOnce(contributions, weights, options, seed) {
   let direction = { dr: 0, dc: 1 };
   let targetLength = startLength;
   let growthProgress = 0;
+  let totalGrowthPoints = 0;
   let alive = true;
 
   const foodSet = new Set(contributions);
@@ -318,16 +325,17 @@ function simulateOnce(contributions, weights, options, seed) {
   for (let step = 1; step <= maxSimulationSteps; step++) {
     if (!alive) break;
 
-    // State hash for cycle detection (visible state only: body + food).
+    // State hash for cycle detection. We detect on the snake's own state
+    // (body + length + progress + shrink phase) and ignore the food set, so
+    // the snake's motion and length loop cleanly even when the food presence
+    // keeps drifting; the food then only differs slightly across the boundary.
     const bodyKeys = body.map(coordinateKey).join(',');
-    const sortedFood = [...foodSet].sort().join(',');
     const state = [
       coordinateKey(body[0]),
       bodyKeys,
       targetLength,
       growthProgress,
       step % Math.max(1, shrinkInterval),
-      sortedFood,
     ].join('|');
 
     if (seen.has(state)) {
@@ -339,7 +347,7 @@ function simulateOnce(contributions, weights, options, seed) {
 
     const head = body[0];
     const targetKey = nearestFoodKey(head, foodSet);
-    const next = chooseNextMove(body, targetLength, direction, head, targetKey, gridRows, gridCols);
+    const next = chooseNextMove(body, targetLength, direction, head, targetKey, foodSet, gridRows, gridCols);
 
     if (!next) {
       alive = false;
@@ -352,6 +360,7 @@ function simulateOnce(contributions, weights, options, seed) {
     let grewBy = 0;
     if (ateKey) {
       const points = weights.get(ateKey);
+      totalGrowthPoints += points;
       const total = growthProgress + points;
       grewBy = Math.floor(total / growthPointsPerSegment);
       growthProgress = total % growthPointsPerSegment;
@@ -406,7 +415,7 @@ function simulateOnce(contributions, weights, options, seed) {
     pushFrame();
   }
 
-  return { frames, cycleStart, cycleEnd, minLength, maxLength };
+  return { frames, cycleStart, cycleEnd, minLength, maxLength, totalGrowthPoints };
 }
 
 function runSimulation(contributionSet, options = {}) {
