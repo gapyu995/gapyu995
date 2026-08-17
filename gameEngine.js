@@ -7,11 +7,11 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 27;
+const SIMULATION_VERSION = 28;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
-  minSnakeLength: 10,
+  minSnakeLength: 1,
   shrinkInterval: 8,
   growthPointsPerSegment: 4,
   foodRegenerateSteps: 70,
@@ -386,8 +386,19 @@ function simulateOnce(contributions, weights, options, seed) {
     }
 
     if (step % Math.max(1, shrinkInterval) === 0) {
-      targetLength = Math.max(targetLength - 1, minLength);
-      while (body.length > targetLength) body.pop();
+      targetLength -= 1;
+      if (targetLength < 1) {
+        // Starved to death: respawn at the initial state so the loop continues.
+        targetLength = startLength;
+        growthProgress = 0;
+        body.length = 0;
+        for (let index = 0; index < startLength; index++) {
+          body.push({ row: startRow, col: startCol - index });
+        }
+        direction = { dr: 0, dc: 1 };
+      } else {
+        while (body.length > targetLength) body.pop();
+      }
     }
 
     for (const [key, left] of [...regeneration.entries()]) {
