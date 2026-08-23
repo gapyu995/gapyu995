@@ -1,7 +1,7 @@
 # 🐍 GitHub Contribution Snake
 
 <p align="center">
-  <img src="./snake-contribution.svg?v=30-9a6e3ed5edda" alt="GitHub contribution snake animation" width="100%" />
+  <img src="./snake-contribution.svg?v=30-b6cdb5dd9be7" alt="GitHub contribution snake animation" width="100%" />
 </p>
 
 The contribution snake is generated automatically from the GitHub contribution
