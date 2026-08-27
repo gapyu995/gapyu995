@@ -7,14 +7,16 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 31;
+const SIMULATION_VERSION = 32;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
   minSnakeLength: 1,
   shrinkInterval: 12,
   growthPointsPerSegment: 4,
-  foodRegenerateSteps: 65,
+  // 0 or 'auto' balances the regeneration against the fixed shrink rate so the
+  // snake length hovers around the initial length for any contribution count.
+  foodRegenerateSteps: 0,
   frameDelayMs: 120,
   gridRows: 7,
   gridCols: 54,
@@ -436,12 +438,33 @@ function runSimulation(contributionSet, options = {}) {
   const weights = normalizeWeights(contributions, opts.contributionWeights);
   const baseSeed = opts.seed !== undefined ? opts.seed : defaultSeed(contributions);
 
+  // Balance the food regeneration against the fixed shrink rate so the length
+  // oscillates around the initial length instead of drifting toward the min or
+  // the max as the daily contribution count changes.
+  let regen = opts.foodRegenerateSteps;
+  if (regen <= 0) {
+    regen = 65;
+    for (let iteration = 0; iteration < 12; iteration++) {
+      const probe = simulateOnce(contributions, weights, { ...opts, foodRegenerateSteps: regen }, baseSeed);
+      const totalSteps = probe.frames.length;
+      const totalGrowth = Math.floor(probe.totalGrowthPoints / opts.growthPointsPerSegment);
+      const totalShrink = Math.floor(totalSteps / Math.max(1, opts.shrinkInterval));
+      if (totalShrink <= 0 || totalGrowth <= 0) break;
+      const nextRegen = Math.max(1, Math.round(regen * (totalGrowth / totalShrink)));
+      if (Math.abs(nextRegen - regen) <= 2) {
+        regen = nextRegen;
+        break;
+      }
+      regen = nextRegen;
+    }
+  }
+
   // Try several deterministic seed offsets so that any day reliably finds a
   // periodic cycle instead of running into the budget.
   let best = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     const seed = (baseSeed + Math.imul(attempt, 0x9e3779b9)) >>> 0;
-    const result = simulateOnce(contributions, weights, opts, seed);
+    const result = simulateOnce(contributions, weights, { ...opts, foodRegenerateSteps: regen }, seed);
     if (result.cycleStart >= 0) {
       best = result;
       break;
@@ -459,7 +482,7 @@ function runSimulation(contributionSet, options = {}) {
   console.log(
     `🐍 ${framesOut.length} frames (cycle ${best.cycleStart >= 0 ? 'detected' : 'fallback'}) · ` +
     `length ${minSeen}..${maxSeen} (max ${best.maxLength}) · ` +
-    `shrink every ${opts.shrinkInterval} steps`,
+    `shrink every ${opts.shrinkInterval} steps · regen ${regen}`,
   );
 
   return {
@@ -469,7 +492,7 @@ function runSimulation(contributionSet, options = {}) {
     minSnakeLength: best.minLength,
     shrinkInterval: opts.shrinkInterval,
     growthPointsPerSegment: opts.growthPointsPerSegment,
-    foodRegenerateSteps: opts.foodRegenerateSteps,
+    foodRegenerateSteps: regen,
     frameDelayMs: opts.frameDelayMs,
     contributionSet: contributions,
     cumulativeSteps: framesOut.length,
