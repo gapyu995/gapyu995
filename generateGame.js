@@ -157,7 +157,7 @@ const metadata = {
   contributionDays: contributionSet.size,
   totalContributions,
   maximumSnakeLength,
-  minSnakeLength: simulationOptions.minSnakeLength,
+  initialLength: simulationOptions.initialLength,
   shrinkInterval,
   growthPointsPerSegment: simulationOptions.growthPointsPerSegment,
   foodRegenerateSteps: simulationOptions.foodRegenerateSteps,

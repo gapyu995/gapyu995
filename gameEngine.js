@@ -7,11 +7,10 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 32;
+const SIMULATION_VERSION = 33;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
-  minSnakeLength: 1,
   shrinkInterval: 12,
   growthPointsPerSegment: 4,
   // 0 or 'auto' balances the regeneration against the fixed shrink rate so the
@@ -275,7 +274,6 @@ function safestMove(body, direction, head, gridRows, gridCols) {
 function simulateOnce(contributions, weights, options, seed) {
   const {
     initialLength,
-    minSnakeLength,
     shrinkInterval,
     growthPointsPerSegment,
     foodRegenerateSteps,
@@ -284,9 +282,10 @@ function simulateOnce(contributions, weights, options, seed) {
     maxSimulationSteps,
   } = options;
 
-  const maxLength = Math.max(1, contributions.size);
-  const minLength = Math.min(minSnakeLength, maxLength);
-  const startLength = Math.min(initialLength, maxLength, gridCols);
+  // No artificial length limits: the snake starts at `initialLength` and its
+  // length evolves purely from eating (growth) and the shrink interval. The
+  // only physical bound is that a living snake always has at least its head.
+  const startLength = Math.min(initialLength, gridCols);
 
   const random = mulberry32(seed);
   const startRow = Math.floor(random() * gridRows);
@@ -371,7 +370,7 @@ function simulateOnce(contributions, weights, options, seed) {
       const total = growthProgress + points;
       grewBy = Math.floor(total / growthPointsPerSegment);
       growthProgress = total % growthPointsPerSegment;
-      targetLength = Math.min(targetLength + grewBy, maxLength);
+      targetLength += grewBy;
     }
 
     body.unshift({ ...next });
@@ -429,7 +428,7 @@ function simulateOnce(contributions, weights, options, seed) {
     pushFrame();
   }
 
-  return { frames, cycleStart, cycleEnd, minLength, maxLength, totalGrowthPoints };
+  return { frames, cycleStart, cycleEnd, totalGrowthPoints };
 }
 
 function runSimulation(contributionSet, options = {}) {
@@ -481,15 +480,14 @@ function runSimulation(contributionSet, options = {}) {
   const maxSeen = Math.max(...lengths);
   console.log(
     `🐍 ${framesOut.length} frames (cycle ${best.cycleStart >= 0 ? 'detected' : 'fallback'}) · ` +
-    `length ${minSeen}..${maxSeen} (max ${best.maxLength}) · ` +
+    `length ${minSeen}..${maxSeen} · ` +
     `shrink every ${opts.shrinkInterval} steps · regen ${regen}`,
   );
 
   return {
     frames: framesOut,
     totalSteps: framesOut.length,
-    maximumSnakeLength: best.maxLength,
-    minSnakeLength: best.minLength,
+    maximumSnakeLength: maxSeen,
     shrinkInterval: opts.shrinkInterval,
     growthPointsPerSegment: opts.growthPointsPerSegment,
     foodRegenerateSteps: regen,
