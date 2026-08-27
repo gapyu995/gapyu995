@@ -7,14 +7,14 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 30;
+const SIMULATION_VERSION = 31;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
   minSnakeLength: 1,
   shrinkInterval: 12,
   growthPointsPerSegment: 4,
-  foodRegenerateSteps: 80,
+  foodRegenerateSteps: 65,
   frameDelayMs: 120,
   gridRows: 7,
   gridCols: 54,
@@ -303,7 +303,12 @@ function simulateOnce(contributions, weights, options, seed) {
   const foodSpawnOrders = new Map();
   let nextSpawnOrder = 0;
   for (const key of contributions) foodSpawnOrders.set(key, nextSpawnOrder++);
+  // regen: key -> steps until it becomes food again (countdown runs only after
+  // the tail has passed back over the eaten cell).
   const regeneration = new Map();
+  // eaten cells still covered by some part of the body; the countdown starts
+  // only once the tail has vacated them.
+  const pendingTail = new Set();
 
   const frames = [];
   const seen = new Map();
@@ -386,12 +391,9 @@ function simulateOnce(contributions, weights, options, seed) {
     if (ateKey) {
       foodSet.delete(ateKey);
       foodSpawnOrders.delete(ateKey);
-      // Staggered regeneration: heavier contribution days take longer to come
-      // back, so eaten cells reappear at different times instead of in sync.
-      // Delays are multiples of the base so the food pattern stays periodic.
-      const weight = weights.get(ateKey);
-      const delay = foodRegenerateSteps * weight;
-      regeneration.set(ateKey, delay);
+      // The eaten cell only starts regenerating once the tail has passed over
+      // it, so park it here until the body no longer covers it.
+      pendingTail.add(ateKey);
     }
 
     if (step % Math.max(1, shrinkInterval) === 0) {
@@ -399,6 +401,16 @@ function simulateOnce(contributions, weights, options, seed) {
       // head cell but never dies.
       targetLength = Math.max(targetLength - 1, 1);
       while (body.length > targetLength) body.pop();
+    }
+
+    // Start the regeneration countdown for eaten cells whose tail has passed.
+    const occupiedKeys = new Set(body.map(coordinateKey));
+    for (const key of [...pendingTail]) {
+      if (!occupiedKeys.has(key)) {
+        pendingTail.delete(key);
+        const weight = weights.get(key);
+        regeneration.set(key, foodRegenerateSteps * weight);
+      }
     }
 
     for (const [key, left] of [...regeneration.entries()]) {
