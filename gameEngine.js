@@ -7,11 +7,11 @@
 // the transition is deterministic, the trajectory eventually repeats; we run
 // it until that repetition and use the resulting cycle as a seamless loop.
 
-const SIMULATION_VERSION = 33;
+const SIMULATION_VERSION = 34;
 
 const DEFAULT_SIMULATION_OPTIONS = Object.freeze({
   initialLength: 13,
-  shrinkInterval: 12,
+  shrinkInterval: 7,
   growthPointsPerSegment: 4,
   // 0 or 'auto' balances the regeneration against the fixed shrink rate so the
   // snake length hovers around the initial length for any contribution count.
